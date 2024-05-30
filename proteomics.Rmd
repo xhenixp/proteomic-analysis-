@@ -8,6 +8,777 @@ date: "2024-05-28"
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# PROTEOMIC ANALYSIS USING THE DEP PACKAGE 
 
 
-hello
+```{r, include=FALSE}
+##loading needed libraries
+library("DEP")
+library("dplyr")
+library("readr")
+library("ggplot2")
+library("ggrepel")
+```
+
+##### DATASET 1 ANALYSIS 
+###### S305N 6 MONTHS AND S305N 15 MONTHS
+
+```{r, include=FALSE}
+##load dataset 
+
+df<-readr::read_tsv('/Users/xheniprebibaj/Library/CloudStorage/OneDrive-UniversityCollegeLondon/Phospho project/data/Set1-Total_abundance_protein_None (1).tsv')
+
+```
+
+
+```{r}
+# Use grepl to create a logical vector indicating whether each element contains "tau"
+contains_tau <- grepl("Ph", df$Index, ignore.case = FALSE)
+
+# Subset the data frame to include only rows where the column contains "tau"
+names_with_tau <- df[contains_tau, ]
+
+# Print the result
+print(names_with_tau)
+
+
+```
+
+
+
+```{r}
+# Use grepl to create a logical vector indicating whether each element is exactly "1"
+low_peptide <- grepl("^1$", df$NumberPSM, ignore.case = FALSE)
+
+# Subset the data frame to include only rows where the column contains exactly "1"
+names_low_peptide <- df[low_peptide, ]
+
+# Print the result
+print(names_low_peptide)
+
+```
+
+```{r}
+###create new dataset that has tau and low peptide proteins removed 
+data<-df[!contains_tau,]
+data<-df[!low_peptide,]
+```
+
+```{r}
+# Are there any duplicated gene names?
+data$Gene %>% duplicated() %>% any()
+```
+
+```{r}
+# Make a table of duplicated gene names
+data %>% group_by(Gene) %>% summarize(frequency = n()) %>% 
+  arrange(desc(frequency)) %>% filter(frequency > 1)
+```
+
+
+
+
+```{r}
+# Make unique names using the annotation in the "Gene" column as primary names and the annotation in "Index" as name for those that do not have an gene name.
+data_unique <- make_unique(data, "Gene", "Index", delim = ";")
+
+# Are there any duplicated names?
+data_unique$name %>% duplicated() %>% any()
+```
+
+```{r}
+# CREATE EXPERIMETAL DESIGN
+##teh data was log2 trsnfomed but we untranform it cause the dep package will log 2 tranform automatically 
+data_unique[,6:21]<-2^data_unique[,6:21]
+
+##I remove the samples that were outliers after having done a PCA further into the analysis, so I came back here to remove the outliers 
+data_unique<- data_unique[,-12]
+data_unique<- data_unique[,-13]
+data_unique<- data_unique[,-c(12,17,18)]
+
+# Extract column names from column 6 to 16
+label_names <- colnames(data_unique)[6:16]
+
+# Create the experimental_design dataframe
+experimental_design <- data.frame(label = label_names)
+
+# Manually specify condition strings
+condition <- c("control15", "control15", "control15","control15", "control6", "control6" , "S305N_15","S305N_15","S305N_15", "S305N_6", "S305N_6" )
+
+
+# Create a vector for the replicate column
+replicate<- c(1,2,3,4,1,2,1,2,3,1,2)
+
+experimental_design<- cbind(experimental_design, condition, replicate)
+
+vector<- c(6:16)
+
+
+####make se object
+data_se <- make_se(data_unique, vector, experimental_design)
+```
+
+```{r}
+# Plot a barplot of the protein identification overlap between samples
+plot_frequency(data_se)
+```
+```{r}
+# Filter for proteins that are identified in 2 out of 3 replicates of at least one condition
+data_filt <- filter_missval(data_se, thr = 0) 
+
+```
+
+```{r}
+# Plot a barplot of the number of identified proteins per samples
+plot_numbers(data_filt)
+```
+
+```{r}
+# Normalize the data
+data_norm <- normalize_vsn(data_filt)
+
+#meanSdPlot(data_norm)
+```
+```{r}
+# Plot a heatmap of proteins with missing values
+plot_missval(data_filt)
+```
+
+
+```{r}
+# Plot intensity distributions and cumulative fraction of proteins with and without missing values
+plot_detect(data_filt)
+```
+
+
+```{r}
+# Impute missing data using random draws from a Gaussian distribution centered around a minimal value (for MNAR)
+data_imp <- impute(data_norm,fun = "MinProb", q = 0.01)
+```
+
+```{r}
+# Plot intensity distributions before and after imputation
+plot_imputation(data_norm, data_imp)
+```
+
+```{r}
+# Visualize normalization by boxplots for all samples before and after normalization
+plot_normalization(data_norm, data_imp)
+```
+
+```{r}
+# Test all possible comparisons of samples
+#data_diff_all_contrasts <- test_diff(data_imp, type = "all")
+
+# Test manually defined comparisons
+data_diff_manual <- test_diff(data_imp, type = "manual", 
+                              test = c("S305N_15_vs_control15", "S305N_6_vs_control6"))
+```
+
+```{r}
+# Denote significant proteins based on user defined cutoffs
+dep1 <- add_rejections(data_diff_manual, alpha = 0.05, lfc = 0)
+```
+
+```{r}
+# Plot the first and second principal components
+plot_pca(dep1, x = 1, y = 2, n = 500, point_size = 4)
+```
+
+```{r}
+# Plot the Pearson correlation matrix
+plot_cor(dep1, significant = TRUE, pal = "Reds")
+##maybe 
+```
+
+```{r}
+# Plot a heatmap of all significant proteins with the data centered per protein
+plot_heatmap(dep1, type = "centered", kmeans = TRUE, 
+             k = 5, col_limit = 1, show_row_names = TRUE,
+             indicate = c("condition", "replicate"), row_font_size = 10)
+```
+
+```{r}
+# Plot a heatmap of all significant proteins (rows) and the tested contrasts (columns)
+plot_heatmap(dep1, type = "contrast", kmeans = TRUE, 
+             k = 2, col_limit = 2, show_row_names = FALSE)
+
+```
+
+
+```{r}
+# Plot a volcano plot for the contrast "Ubi6 vs Ctrl""
+plot_volcano(dep1, contrast = "S305N_15_vs_control15", label_size = 4, add_names = TRUE)
+
+
+```
+
+```{r}
+# Plot a volcano plot for the contrast "Ubi6 vs Ctrl""
+plot_volcano(dep1, contrast = "S305N_6_vs_control6", label_size = 4, add_names = TRUE)
+
+
+```
+
+```{r}
+
+###get the datset analysed form the created DEP obkect in this case dep1
+df_wide1 <- get_df_wide(dep1)
+
+
+# Assuming df_wide1 is your dataset
+
+# Filter only significant rows
+significant_rows <- df_wide1[df_wide1$S305N_15_vs_control15_significant | df_wide1$S305N_6_vs_control6_significant, ]
+
+# Add a new column for point color based on significance
+significant_rows$point_color <- ifelse(significant_rows$S305N_15_vs_control15_significant & significant_rows$S305N_6_vs_control6_significant, "both",
+                                ifelse(significant_rows$S305N_15_vs_control15_significant, "S305N_15_vs_control15_diff",
+                                       ifelse(significant_rows$S305N_6_vs_control6_significant, "S305N_6_vs_control6_diff", "none")))
+
+# Create scatter plot for significant points only with protein names as labels
+ggplot(significant_rows, aes(x = S305N_6_vs_control6_diff, y = S305N_15_vs_control15_diff, color = point_color, label = name)) +
+  geom_point(size = 3, alpha = 0.5) +
+  geom_text_repel() +  # Use geom_text_repel for better label placement
+  scale_color_manual(values = c("both" = "purple", "S305N_15_vs_control15_diff" = "red", "S305N_6_vs_control6_diff" = "blue", "none" = "black")) +
+  labs(title = "Scatter Plot of Fold Changes with Protein Names",
+       x = "S305N_6_vs_control6_diff",
+       y = "S305N_15_vs_control15_diff",
+       color = "Significance") +
+  theme_minimal()
+
+```
+
+
+##### DATASET 2 ANALYSIS
+###### S305N AND P301S IN HIPPPOCAMPUS 
+
+
+```{r, include=FALSE}
+###load dataset 2 
+df2<-readr::read_tsv('/Users/xheniprebibaj/Library/CloudStorage/OneDrive-UniversityCollegeLondon/Phospho project/data/Set2-Total_abundance_protein_None (1).tsv')
+```
+
+```{r}
+# Use grepl to create a logical vector indicating whether each element contains "tau"
+contains_tau2 <- grepl("Ph", df2$Index, ignore.case = FALSE)
+
+# Subset the data frame to include only rows where the column contains "tau"
+names_with_tau2 <- df2[contains_tau2, ]
+
+# Print the result
+print(names_with_tau2)
+
+
+df2<- df2[!contains_tau2, ]
+```
+
+
+```{r}
+# Use grepl to create a logical vector indicating whether each element contains "tau"
+low_peptide2 <- grepl("^1$", df2$NumberPSM, ignore.case = FALSE)
+
+# Subset the data frame to include only rows where the column contains "tau"
+names_low_peptide2 <- df2[low_peptide2, ]
+
+# Print the result
+print(names_low_peptide2)
+
+
+df2<- df2[!low_peptide2, ]
+```
+
+
+```{r}
+# Make unique names using the annotation in the "Gene.names" column as primary names and the annotation in "INDEX" as name for those that do not have an gene name.
+data_unique2 <- make_unique(df2, "Gene", "Index", delim = ";")
+
+#### transform data so it can be log 2 transfomed again by the dep package 
+data_unique2[,6:21] <- 2^data_unique2[,6:21]
+
+# Are there any duplicated names?
+data_unique2$name %>% duplicated() %>% any()
+```
+
+```{r}
+# CREATE EXPERIMENTAL DESIGN
+
+# Extract column names from column 6 to 21
+# Assuming that these columns correspond to the labels for different experimental conditions or replicates
+label_names1 <- colnames(data_unique2)[6:21]
+
+# Create a data frame called 'experimental_design' with a single column 'label'
+# This column contains the extracted column names from the previous step
+experimental_design <- data.frame(label = label_names1)
+
+# Manually specify condition strings
+# Each string corresponds to a condition in the experiment (e.g., "control", "S305N", "P301L", "P301S")
+# Ensure the length matches the number of labels extracted (16 in this case)
+condition <- c("control", "control", "control", "control", 
+               "S305N", "S305N", "S305N", "S305N", 
+               "P301L", "P301L", "P301L", "P301L", 
+               "P301S", "P301S", "P301S", "P301S")
+
+# Create a vector for the replicate column
+# This indicates the replicate number for each condition (1 through 4 for each condition)
+replicate <- c(1, 2, 3, 4, 
+               1, 2, 3, 4, 
+               1, 2, 3, 4, 
+               1, 2, 3, 4)
+
+# Combine the experimental_design data frame with the condition and replicate vectors
+# This forms a complete experimental design data frame with columns: label, condition, and replicate
+experimental_design1 <- cbind(experimental_design, condition, replicate)
+
+# Create a vector specifying the columns (6 to 21) to be used in the subsequent analysis
+# These columns likely contain the experimental data for each label
+vector <- c(6:21)
+
+# Call a function 'make_se' to create a summarized experiment object
+# 'make_se' is assumed to be a custom or package function for creating a summarized experiment
+# 'data_unique2' is the data frame containing the experimental data
+# 'vector' specifies the columns to be used
+# 'experimental_design1' provides the experimental design information (label, condition, replicate)
+data_se <- make_se(data_unique2, vector, experimental_design1)
+
+```
+
+```{r}
+
+# Plot a barplot of the protein identification overlap between samples
+plot_frequency(data_se)
+```
+
+```{r}
+
+# Filter for proteins that are identified in all replicates of at least one condition
+data_filt <- filter_missval(data_se, thr = 0)
+
+```
+```{r}
+
+# Plot a barplot of the number of identified proteins per samples
+plot_numbers(data_filt)
+```
+
+
+```{r}
+
+# Normalize the data
+data_norm <- normalize_vsn(data_filt)
+```
+
+
+
+```{r}
+
+# Visualize normalization by boxplots for all samples before and after normalization
+plot_normalization(data_filt, data_norm)
+
+```
+
+
+```{r}
+# Plot a heatmap of proteins with missing values
+plot_missval(data_filt)
+
+```
+
+
+
+
+
+```{r}
+
+# Plot intensity distributions and cumulative fraction of proteins with and without missing values
+plot_detect(data_filt)
+```
+
+
+
+```{r}
+# Impute missing data using random draws from a Gaussian distribution centered around a minimal value (for MNAR)
+data_imp <- impute(data_norm, fun = "MinProb", q = 0.01)
+
+
+```
+
+```{r}
+# Plot intensity distributions before and after imputation
+plot_imputation(data_norm, data_imp)
+
+```
+
+```{r}
+
+# Test all possible comparisons of samples
+#data_diff_all_contrasts <- test_diff(data_imp, type = "all")
+
+
+# Test manually defined comparisons
+data_diff_manual <- test_diff(data_imp, type = "manual", 
+                              test = c("S305N_vs_control", "P301S_vs_control", "S305N_vs_P301S" ))
+
+```
+
+
+
+```{r}
+
+# Denote significant proteins based on user defined cutoffs
+dep2 <- add_rejections(data_diff_manual, alpha = 0.05, lfc = 0)
+```
+
+
+
+```{r}
+
+# Plot the first and second principal components
+plot_pca(dep2, x = 1, y = 2, n = 500, point_size = 4)
+```
+
+
+```{r}
+
+# Plot the Pearson correlation matrix
+plot_cor(dep2, significant = TRUE)
+```
+
+
+```{r}
+
+# Plot a heatmap of all significant proteins with the data centered per protein
+plot_heatmap(dep2, type = "centered", kmeans = TRUE, 
+             k = 4, col_limit = 1, show_row_names = TRUE,
+             indicate = c("condition", "replicate"), row_font_size=10)
+```
+
+```{r}
+# Plot a heatmap of all significant proteins (rows) and the tested contrasts (columns)
+plot_heatmap(dep2, type = "contrast", kmeans = TRUE, 
+             k = 3, col_limit = 1, show_row_names = TRUE)
+
+```
+
+
+
+```{r}
+# Plot a volcano plot for the contrast "Ubi6 vs Ctrl""
+plot_volcano(dep2, contrast = "S305N_vs_control", label_size = 4, add_names = TRUE)
+```
+
+```{r}
+# Plot a volcano plot for the contrast "Ubi6 vs Ctrl""
+plot_volcano(dep2, contrast = "P301S_vs_control", label_size = 4, add_names = TRUE)
+
+```
+
+
+```{r}
+# Convert the summarized experiment object 'dep2' into a wide data frame format
+df_wide2 <- get_df_wide(dep2)
+
+# Assuming df_wide1 is your dataset
+# Replace "S305N_vs_control_significant" and "P301S_vs_control_significant" with your actual column names for significance
+# Replace "S305N_vs_control_diff" and "P301S_vs_control_diff" with your actual column names for fold changes
+
+# Filter only significant rows
+# This creates a new data frame 'significant_rows2' containing only the rows where
+# 'S305N_vs_control_significant' or 'P301S_vs_control_significant' is TRUE
+significant_rows2 <- df_wide2[df_wide2$S305N_vs_control_significant | df_wide2$P301S_vs_control_significant, ]
+
+# Add a new column 'point_color' for point color based on significance
+# 'both' if both conditions are significant
+# 'S305N_vs_control_diff' if only S305N vs control is significant
+# 'P301S_vs_control_diff' if only P301S vs control is significant
+# 'none' if neither condition is significant (this case won't actually occur due to the previous filter)
+significant_rows2$point_color <- ifelse(significant_rows2$P301S_vs_control_significant & significant_rows2$S305N_vs_control_significant, "both",
+                                ifelse(significant_rows2$S305N_vs_control_significant, "S305N_vs_control_diff",
+                                       ifelse(significant_rows2$P301S_vs_control_significant, "P301S_vs_control_diff", "none")))
+
+# Create scatter plot for significant points only with protein names as labels
+ggplot(significant_rows2, aes(x = S305N_vs_control_diff, y = P301S_vs_control_diff, color = point_color, label = name)) +
+  geom_point(size = 3, alpha = 0.5) +  # Add points to the scatter plot
+  geom_text_repel() +  # Use geom_text_repel for better label placement, avoiding overlap
+  scale_color_manual(values = c("both" = "purple", "S305N_vs_control_diff" = "red", "P301S_vs_control_diff" = "blue", "none" = "black")) +  # Customize point colors
+  labs(title = "Scatter Plot of Fold Changes with Protein Names",  # Add plot title
+       x = "S305N_vs_control_diff",  # Label for the x-axis
+       y = "P301S_vs_control_diff",  # Label for the y-axis
+       color = "Significance") +  # Label for the color legend
+  theme_minimal()  # Use a minimal theme for the plot
+
+```
+
+
+##### DATASET 5 ANALYSIS 
+###### S305N  and P301S CORTEX EDITION
+
+
+
+```{r, include=FALSE}
+
+###load dataset n4
+
+df4<-readr::read_tsv("/Users/xheniprebibaj/Library/CloudStorage/OneDrive-UniversityCollegeLondon/Phospho project/data/Cortex_Total_abundance_protein_None (1).tsv")
+
+```
+
+
+```{r}
+# Use grepl to create a logical vector indicating whether each element contains "tau"
+contains_tau4 <- grepl("PhT", df4$Index, ignore.case = FALSE)
+
+# Subset the data frame to include only rows where the column contains "tau"
+names_with_tau4 <- df4[contains_tau4, ]
+
+# Print the result
+print(names_with_tau4)
+
+
+df4 <- df4[!contains_tau4, ]
+
+```
+
+
+```{r}
+# Use grepl to create a logical vector indicating whether each element in 'df4$NumberPSM' is exactly "1"
+low_peptide4 <- grepl("^1$", df4$NumberPSM, ignore.case = FALSE)
+
+# Subset the data frame 'df4' to include only rows where 'NumberPSM' is exactly "1"
+# 'names_low_peptide4' will contain only those rows
+names_low_peptide4 <- df4[low_peptide4, ]
+
+# Print the subset data frame 'names_low_peptide4' to see the rows where 'NumberPSM' is exactly "1"
+print(names_low_peptide4)
+
+# Update 'df4' to exclude rows where 'NumberPSM' is exactly "1"
+# This effectively removes those rows from 'df4'
+df4 <- df4[!low_peptide4, ]
+
+```
+
+
+```{r}
+# Make unique names using the annotation in the "Gene" column as primary names 
+# and the annotation in "Index" column as names for those that do not have a gene name
+data_unique4 <- make_unique(df4, "Gene", "Index", delim = ";")
+
+# Transform the columns 6 to 21 in 'data_unique4' from log2 scale to linear scale
+# This is done by taking 2 to the power of each value in those columns
+# The DEP package automatically log 2 transform the data, and the datasets were already log2 transformed
+data_unique4[, 6:21] <- 2^data_unique4[, 6:21]
+
+# Check if there are any duplicated names in the 'name' column of 'data_unique4'
+# 'duplicated()' returns a logical vector indicating which rows are duplicates
+# 'any()' checks if there is any TRUE value in that logical vector
+data_unique4$name %>% duplicated() %>% any()
+
+
+```
+
+
+```{r}
+# Remove the 20th column from 'data_unique4' as its an outlier
+data_unique4 <- data_unique4[, -20]
+
+# CREATE EXPERIMENTAL DESIGN
+
+# Extract column names from column 6 to 20
+# These columns likely correspond to different experimental conditions or replicates
+label_names <- colnames(data_unique4)[6:20]
+
+# Create a data frame called 'experimental_design' with a single column 'label'
+# This column contains the extracted column names from the previous step
+experimental_design <- data.frame(label = label_names)
+
+# Manually specify condition strings
+# Each string corresponds to a condition in the experiment (e.g., "control", "S305N", "P301S", "10+3")
+# Ensure the length matches the number of labels extracted (15 in this case)
+condition <- c("control", "control", "control", "control", 
+               "S305N", "S305N", "S305N", "S305N", 
+               "P301S", "P301S", "P301S", "P301S", 
+               "10+3", "10+3", "10+3")
+
+# Create a vector for the replicate column
+# This indicates the replicate number for each condition (1 through 4 for each condition, except "10+3" which has 3 replicates)
+replicate <- c(1, 2, 3, 4, 
+               1, 2, 3, 4, 
+               1, 2, 3, 4, 
+               1, 2, 3)
+
+# Combine the experimental_design data frame with the condition and replicate vectors
+# This forms a complete experimental design data frame with columns: label, condition, and replicate
+experimental_design1 <- cbind(experimental_design, condition, replicate)
+
+# Create a vector specifying the columns (6 to 20) to be used in the subsequent analysis
+# These columns likely contain the experimental data for each label
+vector <- c(6:20)
+
+# Call a function 'make_se' to create a summarized experiment object
+# 'make_se' is assumed to be a custom or package function for creating a summarized experiment
+# 'data_unique4' is the data frame containing the experimental data
+# 'vector' specifies the columns to be used
+# 'experimental_design1' provides the experimental design information (label, condition, replicate)
+data_se4 <- make_se(data_unique4, vector, experimental_design1)
+
+```
+
+```{r}
+plot_frequency(data_se4)
+```
+
+```{r}
+# Filter for proteins that are identified in all replicates of at least one condition
+data_filt <- filter_missval(data_se4, thr = 0)
+
+# Plot a barplot of the number of identified proteins per samples
+plot_numbers(data_filt)
+```
+
+```{r}
+# Normalize the data
+data_norm <- normalize_vsn(data_filt)
+
+# Visualize normalization by boxplots for all samples before and after normalization
+plot_normalization(data_filt, data_norm)
+
+```
+
+
+```{r}
+# Test all possible comparisons of samples
+#data_diff_all_contrasts <- test_diff(data_norm, type = "all")
+
+# Test manually defined comparisons
+data_diff_manual4 <- test_diff(data_norm, type = "manual", 
+                              test = c("S305N_vs_control", "P301S_vs_control", "X10.3_vs_control"))
+```
+
+```{r}
+# Denote significant proteins based on user defined cutoffs
+dep4 <- add_rejections(data_diff_manual4, alpha = 0.05, lfc = 0)
+```
+
+
+```{r}
+# Plot the first and second principal components
+plot_pca(dep4, x = 1, y = 2, n = 500, point_size = 4)
+```
+
+
+
+```{r}
+# Plot a heatmap of proteins with missing values
+plot_missval(data_filt)
+```
+
+```{r}
+# Plot intensity distributions and cumulative fraction of proteins with and without missing values
+plot_detect(data_filt)
+```
+
+
+```{r}
+# Plot a volcano plot for the chttp://127.0.0.1:23945/graphics/plot_zoom_png?width=1500&height=960ontrast "Ubi6 vs Ctrl""
+plot_volcano(dep4, contrast = "S305N_vs_control", label_size = 4, add_names = TRUE)
+```
+```{r}
+# Plot a volcano plot for the chttp://127.0.0.1:23945/graphics/plot_zoom_png?width=1500&height=960ontrast "Ubi6 vs Ctrl""
+plot_volcano(dep4, contrast = "P301S_vs_control", label_size = 4, add_names = TRUE)
+```
+
+```{r}
+# Convert the summarized experiment object 'dep4' into a wide data frame format
+df_wide4<- get_df_wide(dep4)
+# Filter only significant rows
+# This creates a new data frame 'significant_rows4' containing only the rows where
+# 'S305N_vs_control_significant' or 'P301S_vs_control_significant' is TRUE
+significant_rows4 <- df_wide4[df_wide4$S305N_vs_control_significant | df_wide4$P301S_vs_control_significant, ]
+
+# Add a new column 'point_color' for point color based on significance
+# 'both' if both conditions are significant
+# 'S305N_vs_control_diff' if only S305N vs control is significant
+# 'P301S_vs_control_diff' if only P301S vs control is significant
+# 'none' if neither condition is significant (this case won't actually occur due to the previous filter)
+significant_rows4$point_color <- ifelse(significant_rows4$P301S_vs_control_significant & significant_rows4$S305N_vs_control_significant, "both",
+                                ifelse(significant_rows4$S305N_vs_control_significant, "S305N_vs_control_diff",
+                                       ifelse(significant_rows4$P301S_vs_control_significant, "P301S_vs_control_diff", "none")))
+
+# Create scatter plot for significant points only with protein names as labels
+ggplot(significant_rows4, aes(x = S305N_vs_control_diff, y = P301S_vs_control_diff, color = point_color, label = name)) +
+  geom_point(size = 3, alpha = 0.5) +  # Add points to the scatter plot
+  geom_text_repel() +  # Use geom_text_repel for better label placement, avoiding overlap
+  scale_color_manual(values = c("both" = "purple", "S305N_vs_control_diff" = "red", "P301S_vs_control_diff" = "blue", "none" = "black")) +  # Customize point colors
+  labs(title = "Scatter Plot of Fold Changes with Protein Names",  # Add plot title
+       x = "S305N_vs_control_diff",  # Label for the x-axis
+       y = "P301S_vs_control_diff",  # Label for the y-axis
+       color = "Significance") +  # Label for the color legend
+  theme_minimal()  # Use a minimal theme for the plot
+
+```
+
+##### FURTHER ANALYSIS FOR THE DATASETS
+
+
+```{r}
+## DATASET 2 AND 4 COMPARISON
+
+# Filter the significant rows
+# Assuming 'significant_rows' is a data frame with names in the first column and boolean values in the 34th column
+# Extract rows where the 34th column is TRUE, keeping only the 1st and 34th columns
+sig_row <- significant_rows[significant_rows[, 31], c(1, 31)]
+
+# Similarly filter 'significant_rows2' for P301S and S305N
+# Assuming the 41st and 42nd columns are the relevant boolean columns for P301S and S305N, respectively
+sig_row2_p301s <- significant_rows2[significant_rows2[, 41], c(1, 41)]
+sig_row2_s305n <- significant_rows2[significant_rows2[, 42], c(1, 42)]
+
+# Similarly filter 'significant_rows4' for P301S and S305N
+# Assuming the 38th and 39th columns are the relevant boolean columns for P301S and S305N, respectively
+sig_row4_p301s <- significant_rows4[significant_rows4[, 38], c(1, 38)]
+sig_row4_s305n <- significant_rows4[significant_rows4[, 39], c(1, 39)]
+
+# Find proteins shared by P301S
+# Use 'intersect' to find common names between 'sig_row2_p301s' and 'sig_row4_p301s'
+shared_proteins_p301s <- intersect(sig_row2_p301s$name, sig_row4_p301s$name)
+
+# Find proteins shared by S305N
+# Use 'intersect' to find common names between 'sig_row2_s305n' and 'sig_row4_s305n'
+shared_proteins_s305n <- intersect(sig_row2_s305n$name, sig_row4_s305n$name)
+
+# Find proteins shared by S305N datset 1 and 2
+# Use 'intersect' to find common names between 'sig_row2_s305n' and 'sig_row'
+shared_proteins_s305n_1_2 <- intersect(sig_row2_s305n$name, sig_row$name)
+
+# Find proteins shared by S305N datset 1 and 4
+# Use 'intersect' to find common names between 'sig_row4_p301s' and 'sig_row'
+shared_proteins_s305n_1_4 <- intersect(sig_row4_p301s$name, sig_row$name)
+
+# Print the number of shared proteins for P301S
+cat("Number of proteins shared by P301S data 2 and 4:", length(shared_proteins_p301s), "\n")
+
+# Print the names of shared proteins for P301S
+cat("Names of proteins shared by P301S data 2 and 4:", toString(shared_proteins_p301s), "\n")
+
+# Print the number of shared proteins for S305N
+cat("Number of proteins shared by S305N data 2 and 4:", length(shared_proteins_s305n), "\n")
+
+
+# Print the names of shared proteins for S305N
+cat("Names of proteins shared by S305N data 2 and 4:", toString(shared_proteins_s305n), "\n")
+
+
+# Print the number of shared proteins for S305N
+cat("Number of proteins shared by S305N data 1 and 2:", length(shared_proteins_s305n_1_2), "\n")
+
+# Print the names of shared proteins for S305N
+cat("Names of proteins shared by S305N data 1 and 2:", toString(shared_proteins_s305n_1_2), "\n")
+
+
+# Print the number of shared proteins for S305N
+cat("Number of proteins shared by S305N data 1 and 4:", length(shared_proteins_s305n_1_4), "\n")
+
+# Print the names of shared proteins for S305N
+cat("Names of proteins shared by S305N data 1 and 4:", toString(shared_proteins_s305n_1_4), "\n")
+```
+
