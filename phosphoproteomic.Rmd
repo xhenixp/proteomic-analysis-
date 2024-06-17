@@ -1,0 +1,3001 @@
+---
+title: "Phosphoproteomics"
+output: html_document
+date: "2024-05-30"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r, include=FALSE}
+##load the libraries 
+library(readr)
+library(DEP)
+library(dplyr)
+library(caret)
+library(tidyverse)
+library(ggplot2)
+library(ggrepel)
+```
+
+
+
+```{r, include=FALSE}
+# Read in the phospho data from specified file paths
+ph_df <- readr::read_tsv("/Users/xheniprebibaj/Library/CloudStorage/OneDrive-UniversityCollegeLondon/Phospho project/data/phospo_newdata/Set1-Phospho_abundance_single-site_None.tsv")
+
+ph_df2 <- readr::read_tsv("/Users/xheniprebibaj/Library/CloudStorage/OneDrive-UniversityCollegeLondon/Phospho project/data/phospo_newdata/Set2_Phospho_abundance_single-site_None.tsv")
+
+ph_df4 <- readr::read_tsv("/Users/xheniprebibaj/Library/CloudStorage/OneDrive-UniversityCollegeLondon/Phospho project/data/phospo_newdata/Cortex_Phospho_abundance_single-site_None.tsv")
+
+```
+
+
+### Create tau daasets for later 
+
+```{r}
+#create tau datasets
+
+tau_protein1 <- ph_df[!is.na((ph_df$Tau)), ]
+tau_protein2 <- ph_df2[!is.na((ph_df2$Tau)), ]
+tau_protein4 <- ph_df4[!is.na((ph_df4$Tau)), ]
+
+```
+
+```{r, not using }
+# Assuming tau_protein1, tau_protein2, and tau_protein4 are your datasets
+
+# Function to append the first letter after underscore and Tau-pSite position in Gene
+append_tau_info <- function(df) {
+  df$Gene <- paste(df$Gene, paste0("_", sub(".*_(.).*", "\\1", df$Index), df$`Tau-pSite`), sep = "")
+  return(df)
+}
+
+# Apply the function to each dataset
+tau_protein1 <- append_tau_info(tau_protein1)
+tau_protein2 <- append_tau_info(tau_protein2)
+tau_protein4 <- append_tau_info(tau_protein4)
+
+# Display the updated datasets
+print(tau_protein1)
+print(tau_protein2)
+print(tau_protein4)
+
+```
+
+
+
+```{r}
+# Remove rows with gene name "Srrm2" from each dataset
+ph_df <- ph_df[ph_df$Gene != "Srrm2", ]
+ph_df2 <- ph_df2[ph_df2$Gene != "Srrm2", ]
+ph_df4 <- ph_df4[ph_df4$Gene != "Srrm2", ]
+
+```
+
+```{r}
+# Remove rows with gene name NA from each dataset
+ph_df <- ph_df[!is.na(ph_df$Gene), ]
+ph_df2 <- ph_df2[!is.na(ph_df2$Gene), ]
+ph_df4 <- ph_df4[!is.na(ph_df4$Gene), ]
+
+```
+
+```{r}
+# Add suffix from the 'Index' column to the 'Gene' column in ph_df, ph_df2, and ph_df4 data frames
+
+# For ph_df data frame
+ph_df <- ph_df %>%
+  # Modify the 'Gene' column
+  mutate(
+    Gene = paste(
+      Gene,                    # Original 'Gene' column value
+      gsub(".*_", "", Index),  # Extract the part of 'Index' after the last underscore
+      sep = "_"                # Concatenate with an underscore
+    )
+  )
+
+# For ph_df2 data frame
+ph_df2 <- ph_df2 %>%
+  # Modify the 'Gene' column
+  mutate(
+    Gene = paste(
+      Gene,                    # Original 'Gene' column value
+      gsub(".*_", "", Index),  # Extract the part of 'Index' after the last underscore
+      sep = "_"                # Concatenate with an underscore
+    )
+  )
+
+# For ph_df4 data frame
+ph_df4 <- ph_df4 %>%
+  # Modify the 'Gene' column
+  mutate(
+    Gene = paste(
+      Gene,                    # Original 'Gene' column value
+      gsub(".*_", "", Index),  # Extract the part of 'Index' after the last underscore
+      sep = "_"                # Concatenate with an underscore
+    )
+  )
+
+```
+
+
+```{r}
+# Load the dplyr library for data manipulation functions
+library(dplyr)
+
+# Modify the 'Index' column of the 'ph_df' data frame
+ph_df <- ph_df %>%
+  mutate(
+    # Use ifelse() to conditionally modify the 'Index' column
+    Index = ifelse(
+      # Check if 'Index' contains the substring "Ph" (case-sensitive)
+      grepl("Ph", Index, ignore.case = FALSE),
+      
+      # If TRUE: Modify 'Index' by removing the last three digits and appending the value from 'Tau-pSite'
+      paste0(
+        sub("\\d{3}$", "", Index),  # Remove the last three digits from 'Index'
+        "",                         # Empty string (no additional character between)
+        ph_df$`Tau-pSite`           # Append the value from the 'Tau-pSite' column
+      ),
+      
+      # If FALSE: Keep 'Index' unchanged
+      Index
+    )
+  )
+
+```
+
+```{r}
+# Use grepl to create a logical vector indicating whether each element in the 'Gene' column contains "Krt"
+contains_KERATIN <- grepl("Krt", ph_df$Gene, ignore.case = TRUE)
+
+# Subset the data frame to include only rows where the 'Gene' column contains "Krt"
+names_with_krt <- ph_df[contains_KERATIN, ]
+
+# Print the subset of the data frame
+print(names_with_krt)
+
+# Remove rows from the original data frame where the 'Gene' column contains "Krt"
+ph_df <- ph_df[!contains_KERATIN, ]
+
+```
+
+
+```{r}
+# Make unique names using the annotation in the "Gene" column as primary names and the annotation in "ProteinID" column for those that do not have a gene name
+data_unique1 <- make_unique(ph_df, "Gene", "ProteinID", delim = ";")
+
+# Check if there are any duplicated names
+any_duplicated <- data_unique1$name %>% duplicated() %>% any()
+print(any_duplicated)
+
+### Further modifications ###
+
+# Convert columns 18 to 33 to their exponential values (base 2)
+data_unique1[, 18:33] <- 2^data_unique1[, 18:33]
+
+# Remove columns 25 and 33
+# remove last one and also the control number 3 of 6 monthts 
+data_unique1 <- data_unique1[, -c(25, 33)]
+
+```
+
+```{r}
+# Remove the last sample and the control 6 3rd try because of too many missing values and outlier
+
+# CREATE EXPERIMENTAL DESIGN
+
+# Extract column names from column 18 to 31
+label_names1 <- colnames(data_unique1)[18:31]
+
+# Create the experimental_design dataframe with the extracted column names
+experimental_design <- data.frame(label = label_names1)
+
+# Manually specify condition strings for each sample
+condition <- c("control15", "control15", "control15", "control15", 
+               "control6", "control6", "control6", 
+               "S305N_15", "S305N_15", "S305N_15", "S305N_15", 
+               "S305N_6", "S305N_6", "S305N_6")
+
+# Create a vector for the replicate column
+replicate <- c(1, 2, 3, 4, 1, 2, 3, 1, 2, 3, 4, 1, 2, 3)
+
+# Combine the columns to create the experimental design data frame
+experimental_design1 <- cbind(experimental_design, condition, replicate)
+
+# Create a vector of column indices for the samples
+vector <- c(18:31)
+
+# Generate a summarized experiment object
+data_se1 <- make_se(data_unique1, vector, experimental_design1)
+
+```
+
+```{r}
+# Filter for proteins that are identified in all replicates of at least one condition
+data_filt <- filter_missval(data_se1, thr = 1)
+
+# Plot a barplot of the number of identified proteins per samples
+plot_numbers(data_filt)
+```
+
+```{r}
+# Normalize the data
+data_norm <- normalize_vsn(data_filt)
+
+# Visualize normalization by boxplots for all samples before and after normalization
+plot_normalization( data_filt, data_norm)
+```
+
+
+```{r}
+# Plot a heatmap of proteins with missing values
+plot_missval(data_filt)
+```
+
+```{r}
+# Plot intensity distributions and cumulative fraction of proteins with and without missing values
+plot_detect(data_filt)
+```
+
+```{r}
+# Impute missing data using random draws from a Gaussian distribution centered around a minimal value (for MNAR)
+data_imp <- impute(data_norm, fun = "MinProb", q = 0.01)
+```
+
+```{r}
+# Plot intensity distributions before and after imputation
+plot_imputation(data_norm, data_imp)
+```
+
+```{r}
+# Create T-test function for multiple experiments
+
+
+t_test <- function(dt,grp1,grp2){
+  # Subset control group and convert to numeric
+  x <- dt[grp1] %>% unlist %>% as.numeric()
+  # Subset treatment group and convert to numeric
+  y <- dt[grp2] %>% unlist %>% as.numeric()
+  # Perform t-test using the mean of x and y
+  result <- t.test(x, y)
+  # Extract p-values from the results
+  p_vals <- tibble(p_val = result$p.value)
+  # Return p-values
+  return(p_vals)
+} 
+
+
+```
+
+
+
+```{r}
+# Extract the imputed and normalized data from the summarized experiment 
+pho_imp_data1<- get_df_wide(data_imp)
+```
+
+```{r}
+# Perform t-tests on rows of the data frame 'pho_imp_data1'
+# using adply function from the plyr package, and convert the result to a tibble
+
+
+# Perform t-tests
+dat_pvals_pho1 <- adply(
+  .data = pho_imp_data1,  # Input data frame
+  .margins = 1,          # Slice by rows (i.e., apply the function row-wise)
+  .fun = t_test,         # Function to apply (t_test function)
+  grp1 = c(2:4),         # Indices of columns representing group 1
+  grp2 = c(9:12)         # Indices of columns representing group 2
+) %>% as_tibble()        # Convert the resulting data frame to a tibble for better handling
+
+```
+
+```{r}
+# FDR correction
+dat_pvals_adj_pho1 <- dat_pvals_pho1 %>%
+  # Apply FDR correction to the p-values
+  mutate(fdr_adjusted = p.adjust(p_val, method = "fdr"))
+
+# Plot histogram with FDR-adjusted p-values
+dat_pvals_adj_pho1 %>% 
+  ggplot(aes(fdr_adjusted)) + 
+  # Create a histogram with specified bin width and aesthetics
+  geom_histogram(binwidth = 0.05, 
+                 boundary = 0.5, 
+                 fill = "darkblue",
+                 colour = "white") +
+  # Add x-axis label
+  xlab("FDR-adjusted p-value") +
+  # Add y-axis label
+  ylab("Frequency") +
+  # Use a minimal theme for the plot
+  theme_minimal()
+```
+
+
+```{r}
+# Plot histogram with original p-values
+dat_pvals_pho1 %>% 
+  ggplot(aes(p_val)) + 
+  # Create a histogram with specified bin width and aesthetics
+  geom_histogram(binwidth = 0.05, 
+                 boundary = 0.5, 
+                 fill = "darkblue",
+                 colour = "white") +
+  # Add x-axis label
+  xlab("p-value") +
+  # Add y-axis label
+  ylab("Frequency") +
+  # Use a minimal theme for the plot
+  theme_minimal()
+```
+
+```{r}
+# Specify the columns corresponding to control and S305N conditions
+control_columns <- c("control15_1", "control15_2", "control15_3", "control15_4")
+s305n_columns <- c("S305N_15_1", "S305N_15_2", "S305N_15_3", "S305N_15_4")
+
+# Calculate mean values for control and S305N conditions, log fold change, and log-transformed p-values
+dat_fc_pho1 <- dat_pvals_adj_pho1 %>% 
+  mutate(
+    # Calculate mean of control columns, ignoring NA values
+    mean_control = rowMeans(pho_imp_data1[, control_columns], na.rm = TRUE),
+    
+    # Calculate mean of S305N columns, ignoring NA values
+    s305n_means = rowMeans(pho_imp_data1[, s305n_columns], na.rm = TRUE),
+    
+    # Calculate log fold change (difference between means)
+    log_fc = s305n_means - mean_control,
+    
+    # Calculate negative log10 of p-values
+    log_pval = -1 * log10(p_val)
+  )
+
+```
+
+```{r}
+# Select the relevant columns for the final transformed data
+dat_tf_pho1 <- dat_fc_pho1 %>% 
+  select(name, log_fc, log_pval, Index)
+
+# Plot a histogram to look at the distribution of log2 fold change
+dat_tf_pho1 %>%
+  ggplot(aes(log_fc)) + 
+  geom_histogram(binwidth = 0.5,
+                 boundary = 0.5,
+                 fill = "darkblue",
+                 colour = "white") +
+  xlab("log2 fold change") +
+  ylab("Frequency") +
+  theme_minimal()
+
+# Change the name for the plot by removing everything after the first period
+dat_tf_pho1$name <- sub("\\..*", "", dat_tf_pho1$name)
+
+# Further update the name by appending the last part of the Index after the last underscore
+dat_tf_pho1 <- dat_tf_pho1 %>%
+  mutate(name = paste(name, gsub(".*_", "", Index), sep = "_"))
+
+# Display the updated data frame
+print(dat_tf_pho1)
+```
+```{r}
+
+# Function to remove everything after the second underscore in the "name" column
+remove_after_second_underscore <- function(df) {
+  df$name <- sub("^(.*?_.*?)_.*", "\\1", df$name)
+  return(df)
+}
+
+# Apply the function to the dataset
+dat_tf_pho1 <- remove_after_second_underscore(dat_tf_pho1)
+
+# Display the updated dataset
+print(dat_tf_pho1)
+```
+
+```{r}
+# Add a threshold for significant observations and create the volcano plot
+dat_tf_pho1 %>%
+  # Add a column to classify observations as significant or not based on thresholds
+  mutate(threshold = if_else(log_fc >= 0.2 & log_pval >= 1.3 | log_fc <= -0.2 & log_pval >= 1.3, 
+                             "significant", "not significant")) %>%
+  # Create the ggplot object
+  ggplot(aes(log_fc, log_pval, colour = threshold)) +
+  # Add points with specified transparency
+  geom_point(alpha = 0.5) + 
+  # Add horizontal line for p-value threshold
+  geom_hline(yintercept = 1.3, linetype = 2, alpha = 0.5) + 
+  # Add vertical lines for fold change thresholds
+  geom_vline(xintercept = 0.2, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = -0.2, linetype = 2, alpha = 0.5) +
+  # Set colours for significant and not significant points
+  scale_colour_manual(values = c("significant" = "red", "not significant" = "black")) +
+  # Label the x-axis and y-axis
+  xlab("log2 fold change") + 
+  ylab("-log10 p-value") + 
+  # Apply a minimal theme to the plot
+  theme_minimal() + 
+  # Add text labels for significant points using geom_text_repel for better readability
+  geom_text_repel(aes(label = name, color = "black"), 
+                  data = filter(dat_tf_pho1, log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  max.iter = 1000,
+                  nudge_x = 0, nudge_y = 0) +
+  # Add a title to the plot
+  labs(title = "Volcano Plot for S305N 15 Months") + 
+  # Hide the legend
+  theme(legend.position = "none")
+```
+
+
+```{r}
+# Assuming tau_protein1$Gene contains the names of proteins you want to highlight in purple
+
+dat_tf_pho1 %>%
+  # Add a threshold for significant observations
+  mutate(threshold = if_else(log_fc >= 0.2 & log_pval >= 1.3 | log_fc <= -0.2 & log_pval >= 1.3, "significant", "not significant")) %>%
+  # Plot with points colored according to the threshold
+  ggplot(aes(log_fc, log_pval, colour = threshold)) +
+  geom_point(alpha = 0.5) + # Alpha sets the transparency of the points
+  # Add dotted lines to indicate the threshold, semi-transparent
+  geom_hline(yintercept = 1.3, linetype = 2, alpha = 0.5) + 
+  geom_vline(xintercept = 0.2, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = -0.2, linetype = 2, alpha = 0.5) +
+  # Set the color of the points
+  scale_colour_manual(values = c("significant" = "black", "not significant" = "black", "tau_protein1" = "purple")) +
+  xlab("log2 fold change") + ylab("-log10 p-value") + # Relabel the axes
+  theme_minimal() + 
+  geom_text_repel(aes(label = ifelse(name %in% tau_protein1$Gene, name, "")), 
+                  color = "purple",
+                  data = filter(dat_tf_pho1, log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  max.iter = 1000,
+                  nudge_x = 0.2, nudge_y = 0.2) +
+  geom_point(aes(x = log_fc, y = log_pval, color = "tau_protein1"), # Add points for tau_protein1
+             data = filter(dat_tf_pho1, name %in% tau_protein1$Gene),
+             alpha = 0.7, size = 3, shape = 16) + # Adjust size, transparency, and shape
+  labs(title = "S305N 15 Months") + # Set the theme
+  theme(legend.position = "none") # Hide the legend
+
+```
+
+## Create the graphs for the top and bottom 25 proteins based on the log fold change value 
+
+```{r, include=FALSE}
+filt_pho_1<-dat_tf_pho1 %>%
+  # Filter for significant observations
+  filter(log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)) %>% 
+  
+  # Select columns of interest
+  select(name,log_fc)
+```
+
+```{r}
+# Create a subset of the top 25 proteins with the highest log fold change
+top_25_proteins <- filt_pho_1[order(-filt_pho_1$log_fc), ][1:25, ]
+
+# Create the graph
+library(ggplot2)
+
+ggplot(top_25_proteins, aes(x = log_fc, y = reorder(name, -log_fc))) +
+  geom_bar(stat = "identity", color = "white", width = 0.8) +
+  scale_fill_viridis_d() +  # Using a color scale for better color representation
+  labs(title = "Top 25 Proteins with Highest Log Fold Change in S305N_15",
+       x = "Log Fold Change",
+       y = "Protein Name") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none") 
+
+```
+
+```{r}
+# Create a subset of the bottom 25 proteins with the lowest log fold change
+bottom_25_proteins <- filt_pho_1[order(filt_pho_1$log_fc), ][1:25, ]
+
+# Create the graph
+library(ggplot2)
+
+ggplot(bottom_25_proteins, aes(x = log_fc, y = reorder(name, log_fc))) +
+  geom_bar(stat = "identity", color = "white", width = 0.8, fill = "skyblue") +
+  labs(title = "Bottom 25 Proteins with Lowest Log Fold Change in S305N_15",
+       x = "Log Fold Change",
+       y = "Protein Name") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+
+```
+
+```{r}
+# Assuming filt is your data frame
+filt_pho_1$name <- sub("\\_.*", "", filt_pho_1$name)
+
+# Display the updated data frame
+print(filt_pho_1)
+```
+
+```{r}
+sum_pho1_s305n <- filt_pho_1 %>%
+  group_by(name) %>%
+  summarize(
+    Sum_LogFC_S305N = sum(log_fc, na.rm = TRUE),
+    Num_Peptides = n() 
+  )
+
+
+# Install and load the psych package if not already installed
+# install.packages("psych")
+library(psych)
+
+# Calculate the mean and standard error
+l.model <- lm( Sum_LogFC_S305N ~ 1, sum_pho1_s305n)
+
+# Calculate the confidence interval
+confint(l.model, level=0.95)
+summary(l.model)
+
+##Residual standard error: 0.6282 on 856 degrees of freedom, mean 0.2191622
+```
+
+
+```{r}
+# Function to determine point color based on Sum_LogFC_S305N
+get_point_color <- function(x) {
+  ifelse(x > 0, "red", "blue")  # Assigns red to positive values of x, blue to non-positive values
+}
+
+# Create the ggplot object for sum_pho1_s305n
+Plot_pho1_s305n <- ggplot(sum_pho1_s305n, aes(x = Num_Peptides, y = Sum_LogFC_S305N, color = get_point_color(Sum_LogFC_S305N), label = name)) +
+  
+  # Add points to the plot
+  geom_point(size = 3, alpha = 0.6) +  # Set point size and transparency
+  
+  # Add text labels with geom_text_repel
+  geom_text_repel(aes(label = name), size = 3, alpha = 0.6, nudge_x = 0.3, nudge_y = 0.3) +  # Repels labels to avoid overlap
+  
+  # Add plot titles and axis labels
+  labs(title = "Scatter Plot for S305N 15 months Phosphoproteins",
+       x = "Number of Phosphopeptides",
+       y = expression(paste("Sum Log Fold Change (", Delta, "P)")),
+       color = "Phosphoprotein Status") +
+  
+  # Add horizontal lines with geom_hline
+  geom_hline(yintercept = 1.48, linetype = 2, alpha = 0.5) +  # Add a horizontal line at y = 1.48
+  geom_hline(yintercept = -1.04, linetype = 2, alpha = 0.5) +  # Add a horizontal line at y = -1.04
+  
+  # Customize the color scale with scale_color_manual
+  scale_color_manual(values = c("blue" = "blue", "red" = "red"), name = "Phosphorelation Status") +  # Define colors and legend title
+  
+  # Customize x-axis breaks with scale_x_continuous
+  scale_x_continuous(breaks = seq(min(sum_pho1_s305n$Num_Peptides), max(sum_pho1_s305n$Num_Peptides), by = 1)) +  # Set x-axis breaks
+  
+  # Customize the legend with guides
+  guides(color = guide_legend(title = "Phosphoprotein Status"))  # Set legend title
+
+# Print the plot
+Plot_pho1_s305n
+
+```
+
+######
+
+# s305n 6 months
+
+########
+
+```{r}
+#  .margins = 1, slice by rows, .fun = t_test plus t_test arguements
+dat_pvals_pho1_6 <- adply(pho_imp_data1,.margins = 1, .fun = t_test, 
+                grp1 = c(6:8), grp2 = c(13:15)) %>% as_tibble()
+```
+
+```{r}
+# FDR correction
+dat_pvals_adj_pho1_6 <- dat_pvals_pho1_6 %>%
+  mutate(fdr_adjusted = p.adjust(p_val, method = "fdr"))
+
+# Plot histogram with FDR-adjusted p-values
+dat_pvals_adj_pho1_6 %>% 
+  ggplot(aes(fdr_adjusted)) + 
+  geom_histogram(binwidth = 0.05, 
+                 boundary = 0.5, 
+                 fill = "darkblue",
+                 colour = "white") +
+  xlab("FDR-adjusted p-value") +
+  ylab("Frequency") +
+  theme_minimal()
+
+# Plot histogram
+dat_pvals_pho1_6 %>% 
+  ggplot(aes(p_val)) + 
+  geom_histogram(binwidth = 0.05, 
+           boundary = 0.5, 
+           fill = "darkblue",
+           colour = "white") +
+  xlab("p-value") +
+  ylab("Frequency") +
+  theme_minimal()
+
+```
+
+```{r}
+# Define columns for control and S305N samples
+control_columns <- c("control6_1", "control6_2", "control6_3")
+s305n_columns <- c("S305N_6_1", "S305N_6_2", "S305N_6_3")
+
+# Calculate log fold change (log_fc) using dat_pvals_adj_pho1_6 and pho_imp_data1
+dat_fc_pho1_6 <- dat_pvals_adj_pho1_6 %>% 
+  mutate(
+    mean_control = rowMeans(pho_imp_data1[, control_columns], na.rm = TRUE),  # Calculate mean for control columns
+    s305n_means = rowMeans(pho_imp_data1[, s305n_columns], na.rm = TRUE),  # Calculate mean for S305N columns
+    log_fc = s305n_means - mean_control,  # Compute log fold change
+    log_pval = -1 * log10(p_val)  # Compute -log10 transformed p-value
+  )
+
+```
+
+```{r}
+# Final transformed data
+dat_tf_pho1_6 <- dat_fc_pho1_6 %>% select(name,
+                            log_fc, log_pval, Index)
+
+# Plot a histogram to look at the distribution.
+dat_tf_pho1_6 %>%
+  ggplot(aes(log_fc)) + 
+  geom_histogram(binwidth = 0.2,
+                 boundary = 0.2,
+           fill = "darkblue",
+           colour = "white") +
+  xlab("log2 fold change") +
+  ylab("Frequency") +
+  theme_minimal()
+
+```
+
+```{r}
+###change the name for the plot
+dat_tf_pho1_6$name <- sub("\\..*", "", dat_tf_pho1_6$name)
+
+
+#dat_tf_pho1_6 <- dat_tf_pho1_6 %>%
+  #mutate(name = paste(name, gsub(".*_", "", Index), sep = "_"))
+
+# Display the updated data frame
+print(dat_tf_pho1_6)
+```
+
+```{r}
+# Vulcano plot
+dat_tf_pho1_6 %>%
+  # Add a threshold for significant observations
+  mutate(threshold = if_else(log_fc >= 0.2 & log_pval >= 1.3 |
+                               log_fc <= -0.2 & log_pval >= 1.3, "significant", "not significant")) %>%
+  # Plot with points colored according to the threshold
+  ggplot(aes(log_fc, log_pval, colour = threshold)) +
+  geom_point(alpha = 0.5) +  # Alpha sets the transparency of the points
+  # Add dotted lines to indicate the threshold, semi-transparent
+  geom_hline(yintercept = 1.3, linetype = 2, alpha = 0.5) + 
+  geom_vline(xintercept = 0.2, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = -0.2, linetype = 2, alpha = 0.5) +
+  # Set the color of the points
+  scale_colour_manual(values = c("significant" = "red", "not significant" = "black")) +
+  xlab("log2 fold change") + ylab("-log10 p-value") +  # Relabel the axes
+  theme_minimal() + 
+  geom_text_repel(aes(label = name, color = "black"), 
+                  data = filter(dat_tf_pho1_6, log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  max.iter = 1000,
+                  nudge_x = 0, nudge_y = 0) +
+  labs(title = "Volcano Plot for S305N 6 Months") +  # Set the plot title
+  theme(legend.position = "none")  # Hide the legend
+
+```
+```{r}
+# Vulcano plot that highlights position of tau phosphorylated peptides
+dat_tf_pho1_6 %>%
+  # Add a threshold for significant observations
+  mutate(threshold = if_else(log_fc >= 0.2 & log_pval >= 1.3 | log_fc <= -0.2 & log_pval >= 1.3, "significant", "not significant")) %>%
+  # Plot with points colored according to the threshold
+  ggplot(aes(log_fc, log_pval, colour = threshold)) +
+  geom_point(alpha = 0.5) + # Alpha sets the transparency of the points
+  # Add dotted lines to indicate the threshold, semi-transparent
+  geom_hline(yintercept = 1.3, linetype = 2, alpha = 0.5) + 
+  geom_vline(xintercept = 0.2, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = -0.2, linetype = 2, alpha = 0.5) +
+  # Set the color of the points
+  scale_colour_manual(values = c("significant" = "black", "not significant" = "black", "tau_protein1" = "purple")) +
+  xlab("log2 fold change") + ylab("-log10 p-value") + # Relabel the axes
+  theme_minimal() + 
+  geom_text_repel(aes(label = ifelse(name %in% tau_protein1$Gene, name, "")), 
+                  color = "purple",
+                  data = filter(dat_tf_pho1_6, log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  max.iter = 1000,
+                  nudge_x = 0.2, nudge_y = 0.2) +
+  geom_point(aes(x = log_fc, y = log_pval, color = "tau_protein1"), # Add points for tau_protein1
+             data = filter(dat_tf_pho1_6, name %in% tau_protein1$Gene),
+             alpha = 0.7, size = 3, shape = 16) + # Adjust size, transparency, and shape
+  labs(title = "S305N 6 Months") + # Set the theme
+  theme(legend.position = "none") # Hide the legend
+```
+
+
+```{r}
+filt_pho_1_6 <- dat_tf_pho1_6 %>%
+  # Filter for significant observations
+  filter(log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)) %>% 
+  
+  # Select columns of interest
+  select(name,log_fc)
+```
+
+```{r}
+# Create a subset of the top 25 proteins with the highest log fold change
+top_25_proteins <- filt_pho_1_6[order(-filt_pho_1_6$log_fc), ][1:25, ]
+
+# Create the graph
+library(ggplot2)
+
+ggplot(top_25_proteins, aes(x = log_fc, y = reorder(name, -log_fc))) +
+  geom_bar(stat = "identity", color = "white", width = 0.8) +
+  scale_fill_viridis_d() +  # Using a color scale for better color representation
+  labs(title = "Top 25 Proteins with Highest Log Fold Change in S305N_6",
+       x = "Log Fold Change",
+       y = "Protein Name") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none") 
+
+```
+
+```{r}
+# Create a subset of the bottom 25 proteins with the lowest log fold change
+bottom_25_proteins <- filt_pho_1_6[order(filt_pho_1_6$log_fc), ][1:25, ]
+
+# Create the graph
+library(ggplot2)
+
+ggplot(bottom_25_proteins, aes(x = log_fc, y = reorder(name, log_fc))) +
+  geom_bar(stat = "identity", color = "white", width = 0.8, fill = "skyblue") +
+  labs(title = "Bottom 25 Proteins with Lowest Log Fold Change in S305N_6",
+       x = "Log Fold Change",
+       y = "Protein Name") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+
+```
+
+```{r}
+# Assuming filt is your data frame
+filt_pho_1_6$name <- sub("\\_.*", "", filt_pho_1_6$name)
+
+# Display the updated data frame
+print(filt_pho_1_6)
+
+
+```
+
+```{r}
+sum_pho1_s305n6 <- filt_pho_1_6 %>%
+  group_by(name) %>%
+  summarize(
+    Sum_LogFC_S305N = sum(log_fc, na.rm = TRUE),
+    Num_Peptides = n() 
+  )
+
+
+# Install and load the psych package if not already installed
+# install.packages("psych")
+library(psych)
+
+# Calculate the mean and standard error
+l.model <- lm( Sum_LogFC_S305N ~ 1, sum_pho1_s305n6)
+
+# Calculate the confidence interval
+confint(l.model, level=0.95)
+summary(l.model)
+
+##Residual standard error: 0.5234 (1.0468) on 276 degrees of freedom, mean -0.006824442
+
+
+```
+
+```{r}
+
+# Function to determine point color
+get_point_color <- function(x) {
+  ifelse(x > 0, "red", "blue")
+}
+
+# Plot for summarized_p301s
+Plot_pho1_s305n6 <- ggplot(sum_pho1_s305n6, aes(x = Num_Peptides, y = Sum_LogFC_S305N, color = get_point_color(Sum_LogFC_S305N), label = name)) +
+  geom_point(size = 3, alpha = 0.6) +
+  geom_text_repel(aes(label = name), size = 3, alpha = 0.6, nudge_x = 0.3, nudge_y = 0.3) +
+  labs(title = "Scatter Plot for S305N 6 months Phosphoproteins",
+       x = "Number of Phosphopeptides",
+       y = expression(paste("Sum Log Fold Change (", Delta, "P)")),
+       color = "Phosphoprotein Status") +
+  geom_hline(yintercept = 1.039976, linetype = 2, alpha = 0.5) + 
+  geom_hline(yintercept = -1.053624, linetype = 2, alpha = 0.5)+
+  scale_color_manual(values = c("blue" = "blue", "red" = "red"), name = "Phosphorelation Status") +
+  scale_x_continuous(breaks = seq(min(sum_pho1_s305n6$Num_Peptides), max(sum_pho1_s305n6$Num_Peptides), by = 1)) +
+  guides(color = guide_legend(title = "Phosphoprotein Status"))
+
+
+Plot_pho1_s305n6
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+##########################################################################
+##########################################################################
+##########################################################################
+
+### Dataset number 2 analysis 
+
+
+```{r}
+# Make unique names using the annotation in the "Gene.names" column as primary names and the annotation in "Protein.IDs" as name for those that do not have an gene name.
+data_unique2 <- make_unique(ph_df2, "Gene", "ProteinID", delim = ";")
+
+# Are there any duplicated names?
+data_unique2$name %>% duplicated() %>% any()
+
+
+data_unique2[,17:32]<- 2^data_unique2[,17:32]
+
+data_unique2<- data_unique2[,-17]
+```
+
+```{r}
+# Use grepl to create a logical vector indicating whether each element contains "tau"
+contains_KERATIN <- grepl("Krt", data_unique2$Gene, ignore.case = TRUE)
+
+# Subset the data frame to include only rows where the column contains "tau"
+names_with_krt <- data_unique2[contains_KERATIN, ]
+
+# Print the result
+print(names_with_krt)
+
+#remove
+data_unique2<- data_unique2[!contains_KERATIN,]
+
+```
+
+```{r}
+# CREATE EXPERIMETAL DESIGN
+# Extract column names from column 6 to 53
+label_names1 <- colnames(data_unique2)[17:31]
+
+# Create the experimental_design dataframe with labels
+experimental_design <- data.frame(label = label_names1)
+
+# Manually specify condition strings for each label
+condition <- c("control", "control", "control", "S305N", "S305N", "S305N", "S305N", 
+               "P301L", "P301L", "P301L", "P301L", "P301S", "P301S", "P301S", "P301S")
+
+# Create a vector for the replicate column corresponding to the conditions
+replicate <- c(1, 2, 3, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4)
+
+# Combine experimental design with conditions and replicates
+experimental_design1 <- cbind(experimental_design, condition, replicate)
+
+# Select columns from 17 to 31 for analysis
+vector <- c(17:31)
+
+# Apply experimental design to data_unique2 using make_se function
+data_se2 <- make_se(data_unique2, vector, experimental_design1)
+
+```
+
+
+
+
+
+
+```{r}
+# Filter for proteins that are identified in all replicates of at least one condition
+data_filt <- filter_missval(data_se2, thr = 1)
+
+# Plot a barplot of the number of identified proteins per samples
+plot_numbers(data_filt)
+```
+
+
+```{r}
+# Normalize the data
+data_norm <- normalize_vsn(data_filt)
+
+# Visualize normalization by boxplots for all samples before and after normalization
+plot_normalization( data_filt, data_norm)
+
+```
+
+
+
+```{r}
+# Plot a heatmap of proteins with missing values
+plot_missval(data_filt)
+```
+
+
+```{r}
+# Plot intensity distributions and cumulative fraction of proteins with and without missing values
+plot_detect(data_filt)
+```
+
+
+```{r}
+# Impute missing data using random draws from a Gaussian distribution centered around a minimal value (for MNAR)
+data_imp <- impute(data_norm, fun = "MinProb", q = 0.01)
+
+```
+
+
+
+```{r}
+# Plot intensity distributions before and after imputation
+plot_imputation(data_norm, data_imp)
+
+```
+
+
+```{r}
+# Test manually defined comparisons
+data_diff_manual <- test_diff(data_imp, type = "manual", 
+                              test = c("S305N_vs_control", "P301S_vs_control", "S305N_vs_P301S"))
+```
+
+```{r}
+# Denote significant proteins based on user defined cutoffs
+dep_p2 <- add_rejections(data_diff_manual, alpha = 0.05, lfc = log2(1.5))
+```
+
+
+
+```{r}
+# Plot the first and second principal components
+plot_pca(dep_p2, x = 1, y = 2, n = 500, point_size = 4)
+```
+
+
+
+
+
+
+
+#############################################
+
+```{r}
+# Get the datset that is normalized and imputed from the DEP object 
+data_maybe<- get_df_wide(data_imp)
+```
+
+
+```{r}
+# T-test function for multiple experiments
+
+t_test <- function(dt,grp1,grp2){
+  # Subset control group and convert to numeric
+  x <- dt[grp1] %>% unlist %>% as.numeric()
+  # Subset treatment group and convert to numeric
+  y <- dt[grp2] %>% unlist %>% as.numeric()
+  # Perform t-test using the mean of x and y
+  result <- t.test(x, y)
+  # Extract p-values from the results
+  p_vals <- tibble(p_val = result$p.value)
+  # Return p-values
+  return(p_vals)
+} 
+
+
+```
+
+
+```{r}
+
+#  .margins = 1, slice by rows, .fun = t_test plus t_test arguements
+dat_pvals <- adply(data_maybe,.margins = 1, .fun = t_test, 
+                grp1 = c(2:4), grp2 = c(5:8)) %>% as_tibble()
+```
+
+```{r}
+
+# Assuming dat_pvals is your data frame
+
+# FDR correction
+dat_pvals_adj <- dat_pvals %>%
+  mutate(fdr_adjusted = p.adjust(p_val, method = "fdr"))
+
+# Plot histogram with FDR-adjusted p-values
+dat_pvals_adj %>% 
+  ggplot(aes(fdr_adjusted)) + 
+  geom_histogram(binwidth = 0.05, 
+                 boundary = 0.5, 
+                 fill = "darkblue",
+                 colour = "white") +
+  xlab("FDR-adjusted p-value") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+
+
+```{r}
+# Plot histogram
+dat_pvals %>% 
+  ggplot(aes(p_val)) + 
+  geom_histogram(binwidth = 0.05, 
+           boundary = 0.5, 
+           fill = "darkblue",
+           colour = "white") +
+  xlab("p-value") +
+  ylab("Frequency") +
+  theme_minimal()
+
+```
+
+```{r}
+
+# Define columns for control and S305N samples
+control_columns <- c("control_1", "control_2", "control_3")
+s305n_columns <- c("S305N_1", "S305N_2", "S305N_3", "S305N_4")
+
+# Calculate mean values and log fold change
+dat_fc <- dat_pvals %>% 
+  mutate(
+    mean_control = rowMeans(data_maybe[, control_columns], na.rm = TRUE),  # Calculate mean for control columns
+    s305n_means = rowMeans(data_maybe[, s305n_columns], na.rm = TRUE),     # Calculate mean for S305N columns
+    log_fc = s305n_means - mean_control,                                    # Calculate log fold change
+    log_pval = -log10(p_val)                                                # Transform p-value to -log10 scale
+  )
+
+```
+
+
+```{r}
+# Final transformed data, select only needed columns 
+dat_tf <- dat_fc %>% select(name,
+                            log_fc, log_pval, Index)
+```
+
+
+```{r}
+# Plot a histogram to look at the distribution.
+dat_tf %>%
+  ggplot(aes(log_fc)) + 
+  geom_histogram(binwidth = 0.1,
+                 boundary = 0.1,
+           fill = "darkblue",
+           colour = "white") +
+  xlab("log2 fold change") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+
+```{r}
+###change the name for the plot
+dat_tf$name <- sub("\\..*", "", dat_tf$name)
+
+# Assuming dat_tf is your data frame
+#dat_tf <- dat_tf %>%
+#  mutate(name = paste(name, gsub(".*_", "", Index), sep = "_"))
+
+# Display the updated data frame
+print(dat_tf)
+```
+
+```{r, not using this chunk! }
+# Assuming dat_tf_pho1 is your dataset
+
+# Function to remove everything after the second underscore in the "name" column
+remove_after_second_underscore <- function(df) {
+  df$name <- sub("^(.*?_.*?)_.*", "\\1", df$name)
+  return(df)
+}
+
+# Apply the function to the dataset
+dat_tf <- remove_after_second_underscore(dat_tf)
+
+# Display the updated dataset
+print(dat_tf)
+
+```
+
+```{r}
+# Vulcano plot
+dat_tf %>%
+  # Add a threshold for significant observations
+  mutate(threshold = if_else(log_fc >= 0.2 & log_pval >= 1.3 |
+                               log_fc <= -0.2 & log_pval >= 1.3, "A", "B")) %>%
+  # Plot with points colored according to the threshold
+  ggplot(aes(log_fc, log_pval, colour = threshold)) +
+  geom_point(alpha = 0.5) +  # Alpha sets the transparency of the points
+  # Add dotted lines to indicate the threshold, semi-transparent
+  geom_hline(yintercept = 1.3, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = 0.2, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = -0.2, linetype = 2, alpha = 0.5) +
+  # Set the color of the points
+  scale_color_manual(values = c("A" = "red", "B" = "black")) +
+  xlab("log2 fold change") + ylab("-log10 p-value") +  # Relabel the axes
+  theme_minimal() +  # Set the theme
+  geom_text_repel(aes(label = name, color = "black"), 
+                  data = filter(dat_tf, log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  max.iter = 1000,
+                  nudge_x = 0, nudge_y = 0) +
+  labs(title = "Volcano Plot for S305N") +# Add labels for significant proteins
+  theme(legend.position = "none")  # Hide the legend
+
+```
+
+```{r}
+# Vulcano plot that highlights position of tau phosphorylated peptides
+dat_tf %>%
+  # Add a threshold for significant observations
+  mutate(threshold = if_else(log_fc >= 0.2 & log_pval >= 1.3 | log_fc <= -0.2 & log_pval >= 1.3, "significant", "not significant")) %>%
+  # Plot with points colored according to the threshold
+  ggplot(aes(log_fc, log_pval, colour = threshold)) +
+  geom_point(alpha = 0.5) + # Alpha sets the transparency of the points
+  # Add dotted lines to indicate the threshold, semi-transparent
+  geom_hline(yintercept = 1.3, linetype = 2, alpha = 0.5) + 
+  geom_vline(xintercept = 0.2, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = -0.2, linetype = 2, alpha = 0.5) +
+  # Set the color of the points
+  scale_colour_manual(values = c("significant" = "black", "not significant" = "black", "tau_protein2" = "purple")) +
+  xlab("log2 fold change") + ylab("-log10 p-value") + # Relabel the axes
+  theme_minimal() + 
+  geom_text_repel(aes(label = ifelse(name %in% tau_protein2$Gene, name, "")), 
+                  color = "purple",
+                  data = filter(dat_tf, log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  max.iter = 1000,
+                  nudge_x = 0.2, nudge_y = 0.2) +
+  geom_point(aes(x = log_fc, y = log_pval, color = "tau_protein2"), # Add points for tau_protein1
+             data = filter(dat_tf, name %in% tau_protein2$Gene),
+             alpha = 0.7, size = 3, shape = 16) + # Adjust size, transparency, and shape
+  labs(title = "S305N ") + # Set the theme
+  theme(legend.position = "none") # Hide the legend
+```
+
+
+
+```{r}
+filt<-dat_tf %>%
+  # Filter for significant observations
+  filter(log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)) %>% 
+  
+  # Select columns of interest
+  select(name,log_fc)
+```
+
+```{r}
+
+# Create a subset of the top 25 proteins with the highest log fold change
+top_25_proteins <- filt[order(-filt$log_fc), ][1:25, ]
+
+# Create the graph
+library(ggplot2)
+
+ggplot(top_25_proteins, aes(x = log_fc, y = reorder(name, -log_fc))) +
+  geom_bar(stat = "identity", color = "white", width = 0.8) +
+  scale_fill_viridis_d() +  # Using a color scale for better color representation
+  labs(title = "Top 25 Proteins with Highest Log Fold Change in S305N",
+       x = "Log Fold Change",
+       y = "Protein Name") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none") 
+
+```
+
+```{r}
+# Create a subset of the bottom 25 proteins with the lowest log fold change
+bottom_25_proteins <- filt[order(filt$log_fc), ][1:25, ]
+
+# Create the graph
+library(ggplot2)
+
+ggplot(bottom_25_proteins, aes(x = log_fc, y = reorder(name, log_fc))) +
+  geom_bar(stat = "identity", color = "white", width = 0.8, fill = "skyblue") +
+  labs(title = "Bottom 25 Proteins with Lowest Log Fold Change in S305N",
+       x = "Log Fold Change",
+       y = "Protein Name") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+
+```
+
+
+
+```{r}
+# Assuming filt is your data frame
+filt$name <- sub("\\_.*", "", filt$name)
+
+# Display the updated data frame
+print(filt)
+
+```
+
+
+
+```{r}
+sum_pho2 <- filt %>%
+  group_by(name) %>%
+  summarize(
+    Sum_LogFC_S305N = sum(log_fc, na.rm = TRUE),
+    Num_Peptides = n() 
+  )
+
+
+# Install and load the psych package if not already installed
+# install.packages("psych")
+library(psych)
+
+# Calculate the mean and standard error
+l.model <- lm( Sum_LogFC_S305N ~ 1, sum_pho2)
+
+# Calculate the confidence interval
+confint(l.model, level=0.95)
+summary(l.model)
+##Residual standard error: 0.8444 (1.6888)  on 1454 degrees of freedom, mean 0.1092337
+```
+
+```{r}
+
+
+# Function to determine point color
+get_point_color <- function(x) {
+  ifelse(x > 0, "red", "blue")
+}
+
+# Plot for summarized_p301s
+plot_sum_pho2 <- ggplot(sum_pho2, aes(x = Num_Peptides, y = Sum_LogFC_S305N, color = get_point_color(Sum_LogFC_S305N), label = name)) +
+  geom_point(size = 3, alpha = 0.6) +
+  geom_text_repel(aes(label = name), size = 3, alpha = 0.6, nudge_x = 0.3, nudge_y = 0.3) +
+  labs(title = "Scatter Plot for S305N Phosphoproteins",
+       x = "Number of Phosphopeptides",
+       y = expression(paste("Sum Log Fold Change (", Delta, "P)")),
+       color = "Phosphoprotein Status") +
+  geom_hline(yintercept = 1.798034, linetype = 2, alpha = 0.5) + 
+  geom_hline(yintercept = -1.579566, linetype = 2, alpha = 0.5)+
+  scale_color_manual(values = c("blue" = "blue", "red" = "red"), name = "Phosphorelation Status") +
+  scale_x_continuous(breaks = seq(min(sum_pho2$Num_Peptides), max(sum_pho2$Num_Peptides), by = 1)) +
+  guides(color = guide_legend(title = "Phosphoprotein Status"))
+
+
+plot_sum_pho2
+
+###mean of -0.107 and sd of 0.8615
+```
+
+
+
+#################################################
+
+
+## Control_vs_p301s dataset 2
+
+####################################################
+
+```{r}
+#  .margins = 1, slice by rows, .fun = t_test plus t_test arguements
+dat_pvals_p301s <- adply(data_maybe,.margins = 1, .fun = t_test, 
+                grp1 = c(2:4), grp2 = c(13:16)) %>% as_tibble()
+```
+
+
+```{r}
+
+
+# FDR correction
+dat_pvals_adj_p301s <- dat_pvals_p301s %>%
+  mutate(fdr_adjusted = p.adjust(p_val, method = "fdr"))
+
+# Plot histogram with FDR-adjusted p-values
+dat_pvals_adj %>% 
+  ggplot(aes(fdr_adjusted)) + 
+  geom_histogram(binwidth = 0.05, 
+                 boundary = 0.5, 
+                 fill = "darkblue",
+                 colour = "white") +
+  xlab("FDR-adjusted p-value") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+
+
+```{r}
+# Plot histogram no FDR correction
+dat_pvals_p301s %>% 
+  ggplot(aes(p_val)) + 
+  geom_histogram(binwidth = 0.05, 
+           boundary = 0.5, 
+           fill = "darkblue",
+           colour = "white") +
+  xlab("p-value") +
+  ylab("Frequency") +
+  theme_minimal()
+
+```
+
+```{r}
+
+# Define columns for control and P301S samples
+control_columns <- c("control_1", "control_2", "control_3")
+p301s_columns <- c("P301S_1", "P301S_2", "P301S_3", "P301S_4")
+
+# Calculate mean values and log fold change
+dat_fc_p310s <- dat_pvals_p301s %>% 
+  mutate(
+    mean_control = rowMeans(dat_pvals_p301s[, control_columns], na.rm = TRUE),  # Calculate mean for control columns
+    treat_means = rowMeans(dat_pvals_p301s[, p301s_columns], na.rm = TRUE),    # Calculate mean for P301S columns
+    log_fc = treat_means - mean_control,                                         # Calculate log fold change
+    log_pval = -log10(p_val)                                                     # Transform p-value to -log10 scale
+  )
+
+```
+
+
+```{r}
+# Final transformed data and take only needed columns 
+dat_tf_p310s <- dat_fc_p310s %>% select(name,
+                            log_fc, log_pval, Index)
+```
+
+
+```{r}
+# Plot a histogram to look at the distribution.
+dat_tf_p310s %>%
+  ggplot(aes(log_fc)) + 
+  geom_histogram(binwidth = 0.5,
+                 boundary = 0.5,
+           fill = "darkblue",
+           colour = "white") +
+  xlab("log2 fold change") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+
+
+```{r}
+###change the name for the plot
+dat_tf_p310s$name <- sub("\\..*", "", dat_tf_p310s$name)
+
+# Assuming dat_tf is your data frame
+#dat_tf_p310s <- dat_tf_p310s %>%
+# mutate(name = paste(name, gsub(".*_", "", Index), sep = "_"))
+
+# Display the updated data frame
+print(dat_tf_p310s)
+```
+
+
+```{r, not using this chunk of code !!}
+# Assuming dat_tf_pho1 is your dataset
+
+# Function to remove everything after the second underscore in the "name" column
+remove_after_second_underscore <- function(df) {
+  df$name <- sub("^(.*?_.*?)_.*", "\\1", df$name)
+  return(df)
+}
+
+# Apply the function to the dataset
+dat_tf_p310s <- remove_after_second_underscore(dat_tf_p310s)
+
+# Display the updated dataset
+print(dat_tf_p310s)
+
+```
+
+
+```{r}
+# Vucano plot
+
+dat_tf_p310s %>%
+  # Add a threhold for significant observations
+  mutate(threshold = if_else(log_fc >= 0.2 & log_pval >= 1.3 |
+                               log_fc <= -0.2 & log_pval >= 1.3,"significant", "not significant")) %>%
+  # Plot with points coloured according to the threshold
+  ggplot(aes(log_fc,log_pval, colour = threshold)) +
+  geom_point(alpha = 0.5) + # Alpha sets the transparency of the points
+  # Add dotted lines to indicate the threshold, semi-transparent
+  geom_hline(yintercept = 1.3, linetype = 2, alpha = 0.5) + 
+  geom_vline(xintercept = 0.2, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = -0.2, linetype = 2, alpha = 0.5) +
+  # Set the colour of the points
+  scale_colour_manual(values = c("significant"= "red", "not significant"= "black")) +
+  xlab("log2 fold change") + ylab("-log10 p-value") + # Relabel the axes
+  theme_minimal() +
+  geom_text_repel(aes(label = name, color = "black"), 
+                  data = filter(dat_tf_p310s, log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  max.iter = 1000,
+                  nudge_x = 0, nudge_y = 0) +
+  labs(title = "Volcano Plot for P301S")+# Set the theme
+  theme(legend.position="none") # Hide the legend
+```
+
+```{r}
+# Vulcano plot that highlights position of tau phosphorylated peptides
+dat_tf_p310s %>%
+  # Add a threshold for significant observations
+  mutate(threshold = if_else(log_fc >= 0.2 & log_pval >= 1.3 | log_fc <= -0.2 & log_pval >= 1.3, "significant", "not significant")) %>%
+  # Plot with points colored according to the threshold
+  ggplot(aes(log_fc, log_pval, colour = threshold)) +
+  geom_point(alpha = 0.5) + # Alpha sets the transparency of the points
+  # Add dotted lines to indicate the threshold, semi-transparent
+  geom_hline(yintercept = 1.3, linetype = 2, alpha = 0.5) + 
+  geom_vline(xintercept = 0.2, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = -0.2, linetype = 2, alpha = 0.5) +
+  # Set the color of the points
+  scale_colour_manual(values = c("significant" = "black", "not significant" = "black", "tau_protein2" = "purple")) +
+  xlab("log2 fold change") + ylab("-log10 p-value") + # Relabel the axes
+  theme_minimal() + 
+  geom_text_repel(aes(label = ifelse(name %in% tau_protein2$Gene, name, "")), 
+                  color = "purple",
+                  data = filter(dat_tf_p310s, log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  max.iter = 1000,
+                  nudge_x = 0.4, nudge_y = 0.2) +
+  geom_point(aes(x = log_fc, y = log_pval, color = "tau_protein2"), # Add points for tau_protein1
+             data = filter(dat_tf_p310s, name %in% tau_protein2$Gene),
+             alpha = 0.7, size = 3, shape = 16) + # Adjust size, transparency, and shape
+  labs(title = "P301S ") + # Set the theme
+  theme(legend.position = "none") # Hide the legend
+```
+
+
+```{r}
+filt_p301s<-dat_tf_p310s %>%
+  # Filter for significant observations
+  filter(log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)) %>% 
+  
+  # Select columns of interest
+  select(name,log_fc)
+```
+
+```{r}
+# Create a subset of the top 25 proteins with the highest log fold change
+top_25_proteins <- filt_p301s[order(-filt_p301s$log_fc), ][1:25, ]
+
+# Create the graph
+library(ggplot2)
+
+ggplot(top_25_proteins, aes(x = log_fc, y = reorder(name, -log_fc))) +
+  geom_bar(stat = "identity", color = "white", width = 0.8) +
+  scale_fill_viridis_d() +  # Using a color scale for better color representation
+  labs(title = "Top 25 Proteins with Highest Log Fold Change in P301S",
+       x = "Log Fold Change",
+       y = "Protein Name") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none") 
+
+```
+
+```{r}
+# Create a subset of the bottom 25 proteins with the lowest log fold change
+bottom_25_proteins <- filt_p301s[order(filt_p301s$log_fc), ][1:25, ]
+
+# Create the graph
+library(ggplot2)
+
+ggplot(bottom_25_proteins, aes(x = log_fc, y = reorder(name, log_fc))) +
+  geom_bar(stat = "identity", color = "white", width = 0.8, fill = "skyblue") +
+  labs(title = "Bottom 25 Proteins with Lowest Log Fold Change in P301S",
+       x = "Log Fold Change",
+       y = "Protein Name") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+
+```
+
+```{r}
+# Assuming filt is your data frame, remove the names after the _ which in this case is indicating the exact position of the phosphorykation onthe protein 
+filt_p301s$name <- sub("\\_.*", "", filt_p301s$name)
+
+# Display the updated data frame
+print(filt_p301s)
+
+```
+
+
+
+```{r}
+sum_pho2_p301s <- filt_p301s %>%
+  group_by(name) %>%
+  summarize(
+    Sum_LogFC_p301s = sum(log_fc, na.rm = TRUE),
+    Num_Peptides = n() 
+  )
+
+
+# Install and load the psych package if not already installed
+# install.packages("psych")
+library(psych)
+
+# Calculate the mean and standard error
+l.model_p301s <- lm( Sum_LogFC_p301s ~ 1, sum_pho2_p301s)
+
+# Calculate the confidence interval
+confint(l.model_p301s, level=0.95)
+summary(l.model_p301s)
+## 0.8587  (1.7174) on 1467 degrees of freedom, mean 0.0922097
+```
+
+```{r}
+# Function to determine point color
+get_point_color <- function(x) {
+  ifelse(x > 0, "red", "blue")
+}
+
+# Plot for summarized_p301s
+plot_sum_pho2_p301s <- ggplot(sum_pho2_p301s, aes(x = Num_Peptides, y = Sum_LogFC_p301s, color = get_point_color(Sum_LogFC_p301s), label = name)) +
+  geom_point(size = 3, alpha = 0.6) +
+  geom_text_repel(aes(label = name), size = 3, alpha = 0.6, nudge_x = 0.3, nudge_y = 0.3) +
+  labs(title = "Scatter Plot for P301S Phosphoproteins",
+       x = "Number of Phosphopeptides",
+       y = expression(paste("Sum Log Fold Change (", Delta, "P)")),
+       color = "Phosphoprotein Status") +
+  geom_hline(yintercept = 1.80961, linetype = 2, alpha = 0.5) + 
+  geom_hline(yintercept = -1.62519, linetype = 2, alpha = 0.5)+
+  scale_color_manual(values = c("blue" = "blue", "red" = "red"), name = "Phosphorelation Status") +
+  scale_x_continuous(breaks = seq(min(sum_pho2_p301s$Num_Peptides), max(sum_pho2_p301s$Num_Peptides), by = 1)) +
+  guides(color = guide_legend(title = "Phosphoprotein Status"))
+
+
+plot_sum_pho2_p301s
+
+#####mean of -0.09081571 and a sd of 0.8621
+```
+##################################
+
+
+## s305n vs p301s dataset 2 
+
+
+####################################
+
+```{r}
+#  .margins = 1, slice by rows, .fun = t_test plus t_test arguements
+dat_pvals <- adply(data_maybe,.margins = 1, .fun = t_test, 
+                grp1 = c(5:8), grp2 = c(13:16)) %>% as_tibble()
+```
+
+```{r}
+# FDR correction
+dat_pvals_adj <- dat_pvals %>%
+  mutate(fdr_adjusted = p.adjust(p_val, method = "fdr"))
+
+# Plot histogram with FDR-adjusted p-values
+dat_pvals_adj %>% 
+  ggplot(aes(fdr_adjusted)) + 
+  geom_histogram(binwidth = 0.05, 
+                 boundary = 0.5, 
+                 fill = "darkblue",
+                 colour = "white") +
+  xlab("FDR-adjusted p-value") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+
+
+```{r}
+# Plot histogram
+dat_pvals %>% 
+  ggplot(aes(p_val)) + 
+  geom_histogram(binwidth = 0.05, 
+           boundary = 0.5, 
+           fill = "darkblue",
+           colour = "white") +
+  xlab("p-value") +
+  ylab("Frequency") +
+  theme_minimal()
+
+```
+
+```{r}
+# Define columns for P301S and S305N samples
+control_columns <- c("P301S_1", "P301S_2", "P301S_3", "P301S_4")
+s305n_columns <- c("S305N_1", "S305N_2", "S305N_3", "S305N_4")
+
+# Calculate mean values and log fold change
+dat_fc <- dat_pvals %>% 
+  mutate(
+    mean_control = rowMeans(data_maybe[, control_columns], na.rm = TRUE),  # Calculate mean for P301S control columns
+    s305n_means = rowMeans(data_maybe[, s305n_columns], na.rm = TRUE),    # Calculate mean for S305N columns
+    log_fc = s305n_means - mean_control,                                    # Calculate log fold change
+    log_pval = -log10(p_val)                                                # Transform p-value to -log10 scale
+  )
+
+```
+
+
+```{r}
+# Final transformed data, select needed columns 
+dat_tf <- dat_fc %>% select(name,
+                            log_fc, log_pval, Index)
+```
+
+
+```{r}
+# Plot a histogram to look at the distribution.
+dat_tf %>%
+  ggplot(aes(log_fc)) + 
+  geom_histogram(binwidth = 0.1,
+                 boundary = 0.1,
+           fill = "darkblue",
+           colour = "white") +
+  xlab("log2 fold change") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+
+```{r}
+###change the name for the plot
+dat_tf$name <- sub("\\..*", "", dat_tf$name)
+
+# Assuming dat_tf is your data frame
+#dat_tf <- dat_tf %>%
+  #mutate(name = paste(name, gsub(".*_", "", Index), sep = "_"))
+
+# Display the updated data frame
+print(dat_tf)
+```
+
+```{r, not using this chunk !!!}
+
+# Function to remove everything after the second underscore in the "name" column
+remove_after_second_underscore <- function(df) {
+  df$name <- sub("^(.*?_.*?)_.*", "\\1", df$name)
+  return(df)
+}
+
+# Apply the function to the dataset
+dat_tf <- remove_after_second_underscore(dat_tf)
+
+# Display the updated dataset
+print(dat_tf)
+
+```
+
+```{r}
+
+dat_tf %>%
+  # Add a threshold for significant observations
+  mutate(threshold = if_else(log_fc >= 0.2 & log_pval >= 1.3 |
+                               log_fc <= -0.2 & log_pval >= 1.3, "A", "B")) %>%
+  # Plot with points colored according to the threshold
+  ggplot(aes(log_fc, log_pval, colour = threshold)) +
+  geom_point(alpha = 0.5) +  # Alpha sets the transparency of the points
+  # Add dotted lines to indicate the threshold, semi-transparent
+  geom_hline(yintercept = 1.3, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = 0.2, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = -0.2, linetype = 2, alpha = 0.5) +
+  # Set the color of the points
+  scale_color_manual(values = c("A" = "red", "B" = "black")) +
+  xlab("log2 fold change") + ylab("-log10 p-value") +  # Relabel the axes
+  theme_minimal() +  # Set the theme
+  geom_text_repel(aes(label = name, color = "black"), 
+                  data = filter(dat_tf, log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  max.iter = 1000,
+                  nudge_x = 0, nudge_y = 0) +
+  labs(title = "Volcano Plot for S305N vs P301S") +# Add labels for significant proteins
+  theme(legend.position = "none")  # Hide the legend
+
+```
+
+```{r}
+
+# Vulcano plot that highlights position of tau phosphorylated peptides
+
+dat_tf %>%
+  # Add a threshold for significant observations
+  mutate(threshold = if_else(log_fc >= 0.2 & log_pval >= 1.3 | log_fc <= -0.2 & log_pval >= 1.3, "significant", "not significant")) %>%
+  # Plot with points colored according to the threshold
+  ggplot(aes(log_fc, log_pval, colour = threshold)) +
+  geom_point(alpha = 0.5) + # Alpha sets the transparency of the points
+  # Add dotted lines to indicate the threshold, semi-transparent
+  geom_hline(yintercept = 1.3, linetype = 2, alpha = 0.5) + 
+  geom_vline(xintercept = 0.2, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = -0.2, linetype = 2, alpha = 0.5) +
+  # Set the color of the points
+  scale_colour_manual(values = c("significant" = "black", "not significant" = "black", "tau_protein2" = "purple")) +
+  xlab("log2 fold change") + ylab("-log10 p-value") + # Relabel the axes
+  theme_minimal() + 
+  geom_text_repel(aes(label = ifelse(name %in% tau_protein2$Gene, name, "")), 
+                  color = "purple",
+                  data = filter(dat_tf, log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  max.iter = 1000,
+                  nudge_x = 0.2, nudge_y = 0.2) +
+  geom_point(aes(x = log_fc, y = log_pval, color = "tau_protein2"), # Add points for tau_protein1
+             data = filter(dat_tf, name %in% tau_protein2$Gene),
+             alpha = 0.7, size = 3, shape = 16) + # Adjust size, transparency, and shape
+  labs(title = "S305N vs P301S") + # Set the theme
+  theme(legend.position = "none") # Hide the legend
+```
+
+
+
+```{r}
+filt<-dat_tf %>%
+  # Filter for significant observations
+  filter(log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)) %>% 
+  
+  # Select columns of interest
+  select(name,log_fc)
+```
+
+
+
+
+```{r}
+# Assuming filt is your data frame
+filt$name <- sub("\\_.*", "", filt$name)
+
+# Display the updated data frame
+print(filt)
+
+```
+
+
+
+```{r}
+sum_pho2_s_p <- filt %>%
+  group_by(name) %>%
+  summarize(
+    Sum_LogFC_S305N = sum(log_fc, na.rm = TRUE),
+    Num_Peptides = n() 
+  )
+
+
+# Install and load the psych package if not already installed
+# install.packages("psych")
+library(psych)
+
+# Calculate the mean and standard error
+l.model <- lm( Sum_LogFC_S305N ~ 1, sum_pho2_s_p)
+
+# Calculate the confidence interval
+confint(l.model, level=0.95)
+summary(l.model)
+##RResidual standard error: 0.9114 (1.8228)on 1621 degrees of freedom, mean 0.07303548
+```
+
+```{r}
+## Scatter plot of phosphoproteome
+# Function to determine point color
+get_point_color <- function(x) {
+  ifelse(x > 0, "red", "blue")
+}
+
+# Plot for summarized_p301s
+plot_sum_pho2_sp <- ggplot(sum_pho2_s_p, aes(x = Num_Peptides, y = Sum_LogFC_S305N, color = get_point_color(Sum_LogFC_S305N), label = name)) +
+  geom_point(size = 3, alpha = 0.6) +
+  geom_text_repel(aes(label = name), size = 3, alpha = 0.6, nudge_x = 0.3, nudge_y = 0.3) +
+  labs(title = "Scatter Plot for S305N vs P301S Phosphoproteins",
+       x = "Number of Phosphopeptides",
+       y = expression(paste("Sum Log Fold Change (", Delta, "P)")),
+       color = "Phosphoprotein Status") +
+  geom_hline(yintercept = 1.895835, linetype = 2, alpha = 0.5) + 
+  geom_hline(yintercept = -1.749765, linetype = 2, alpha = 0.5)+
+  scale_color_manual(values = c("blue" = "blue", "red" = "red"), name = "Phosphorelation Status") +
+  scale_x_continuous(breaks = seq(min(sum_pho2$Num_Peptides), max(sum_pho2$Num_Peptides), by = 1)) +
+  guides(color = guide_legend(title = "Phosphoprotein Status"))
+
+
+plot_sum_pho2_sp
+
+###mean of -0.107 and sd of 0.8615
+```
+
+##########################################################################
+##########################################################################
+##########################################################################
+
+### Dataset number 4 analysis Cortex
+
+```{r}
+# Use grepl to create a logical vector indicating whether each element contains "krt"
+contains_KERATIN <- grepl("Krt", ph_df4$Gene, ignore.case = TRUE)
+
+# Subset the data frame to include only rows where the column contains "krt"
+names_with_krt <- ph_df4[contains_KERATIN, ]
+
+# Print the result
+print(names_with_krt)
+
+#remove
+ph_df4<- ph_df4[!contains_KERATIN,]
+
+```
+
+```{r}
+
+# Make unique names using the annotation in the "Gene.names" column as primary names 
+# and the annotation in "Protein.IDs" as name for those that do not have a gene name.
+data_unique3 <- make_unique(ph_df4, "Gene", "ProteinID", delim = ";")
+
+# Perform a transformation on columns 17 to 32 by raising them to the power of 2
+data_unique3[, 17:32] <- 2^data_unique3[, 17:32]
+
+# Remove column 31 from the dataframe to exclude "p301s-3"
+data_unique3 <- data_unique3[, -31]
+
+
+```
+
+
+```{r}
+# CREATE EXPERIMETAL DESIGN
+# Extract column names from columns 17 to 31
+label_names1 <- colnames(data_unique3)[17:31]
+
+# Create the experimental_design dataframe with column names extracted
+experimental_design <- data.frame(label = label_names1)
+
+# Manually specify condition strings corresponding to experimental conditions
+condition <- c("control", "control", "control", "control",   # Control conditions
+               "S305N", "S305N", "S305N", "S305N",           # S305N conditions
+               "P301S", "P301S", "P301S", "P301S",           # P301S conditions
+               "10_3", "10_3", "10_3")                       # Additional condition
+
+# Create a vector for the replicate column
+replicate <- c(1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3)
+experimental_design1 <- cbind(experimental_design, condition, replicate)
+
+# Define the vector of column indices (17 to 31) for data_se3 function call
+vector <- c(17:31)
+
+# Create summarized experimental data (data_se3) using make_se function
+data_se3 <- make_se(data_unique3, vector, experimental_design1)
+
+
+
+```
+
+
+
+```{r}
+# Filter for proteins that are identified in all replicates of at least one condition
+data_filt <- filter_missval(data_se3, thr = 1)
+
+# Plot a barplot of the number of identified proteins per samples
+plot_numbers(data_filt)
+```
+
+```{r}
+# Normalize the data
+data_norm <- normalize_vsn(data_filt)
+
+# Visualize normalization by boxplots for all samples before and after normalization
+plot_normalization( data_filt, data_norm)
+
+```
+
+```{r}
+# Plot a heatmap of proteins with missing values
+plot_missval(data_filt)
+```
+```{r}
+# Plot intensity distributions and cumulative fraction of proteins with and without missing values
+plot_detect(data_filt)
+```
+
+```{r}
+# Impute missing data using random draws from a Gaussian distribution centered around a minimal value (for MNAR)
+data_imp <- impute(data_norm, fun = "MinProb", q = 0.01)
+
+```
+
+```{r}
+# Plot intensity distributions before and after imputation
+plot_imputation(data_norm, data_imp)
+
+```
+```{r}
+## Get the data after imputation and normalization from the summarized experiment 
+pho_imp_4<- get_df_wide(data_imp)
+
+```
+
+
+```{r}
+# .margins = 1, slice by rows, .fun = t_test plus t_test arguments
+dat_pvals_s305n4 <- adply(pho_imp_4, .margins = 1, .fun = t_test,
+                          grp1 = c(2:5), grp2 = c(6:9)) %>% as_tibble()
+```
+
+
+```{r}
+# FDR correction
+dat_pvals_adj_s305n4 <- dat_pvals_s305n4 %>%
+  mutate(fdr_adjusted = p.adjust(p_val, method = "fdr"))
+
+# Plot histogram with FDR-adjusted p-values
+dat_pvals_adj_s305n4 %>%
+  ggplot(aes(fdr_adjusted)) +
+  geom_histogram(binwidth = 0.05,
+                 boundary = 0.5,
+                 fill = "darkblue",
+                 colour = "white") +
+  xlab("FDR-adjusted p-value") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+
+
+```{r}
+# Plot histogram
+dat_pvals_s305n4 %>%
+  ggplot(aes(p_val)) +
+  geom_histogram(binwidth = 0.05,
+                 boundary = 0.5,
+                 fill = "darkblue",
+                 colour = "white") +
+  xlab("p-value") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+
+
+```{r}
+# Define control and treatment column names
+control_columns <- c("control_1", "control_2", "control_3", "control_3")  # Control samples
+s305n4_columns <- c("S305N_1", "S305N_2", "S305N_3", "S305N_4")  # Treatment samples
+
+# Perform data transformation using dplyr pipeline
+dat_fc_s305n4 <- dat_pvals_s305n4 %>%
+  mutate(
+    # Calculate mean values for control and treatment samples
+    mean_control = rowMeans(dat_pvals_s305n4[, control_columns], na.rm = TRUE),
+    treat_means = rowMeans(dat_pvals_s305n4[, s305n4_columns], na.rm = TRUE),
+    # Calculate log fold change and log-transformed p-value
+    log_fc = treat_means - mean_control,
+    log_pval = -1 * log10(p_val)
+  )
+
+# Final transformed data selecting specific columns
+dat_tf_s305n4 <- dat_fc_s305n4 %>% 
+  select(name, log_fc, log_pval, Index)
+
+```
+
+
+```{r}
+# Plot a histogram to look at the distribution.
+dat_tf_s305n4 %>%
+  ggplot(aes(log_fc)) +
+  geom_histogram(binwidth = 0.5,
+                 boundary = 0.5,
+                 fill = "darkblue",
+                 colour = "white") +
+  xlab("log2 fold change") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+
+```{r}
+###change the name for the plot
+dat_tf_s305n4$name <- sub("\\..*", "", dat_tf_s305n4$name)
+
+# Assuming dat_tf is your data frame
+#dat_tf_s305n4 <- dat_tf_s305n4 %>%
+#  mutate(name = paste(name, gsub(".*_", "", Index), sep = "_"))
+
+# Display the updated data frame
+print(dat_tf_s305n4)
+```
+
+```{r, not using this chunk of code !!}
+# Assuming dat_tf_pho1 is your dataset
+
+# Function to remove everything after the second underscore in the "name" column
+remove_after_second_underscore <- function(df) {
+  df$name <- sub("^(.*?_.*?)_.*", "\\1", df$name)
+  return(df)
+}
+
+# Apply the function to the dataset
+dat_tf_s305n4 <- remove_after_second_underscore(dat_tf_s305n4)
+
+# Display the updated dataset
+print(dat_tf_s305n4)
+
+```
+
+
+
+```{r}
+## Vulcano plot
+dat_tf_s305n4 %>%
+  # Add a threhold for significant observations
+  mutate(threshold = if_else(log_fc >= 0.2 & log_pval >= 1.3 |
+                               log_fc <= -0.2 & log_pval >= 1.3,"significant", "not significant")) %>%
+  # Plot with points coloured according to the threshold
+  ggplot(aes(log_fc,log_pval, colour = threshold)) +
+  geom_point(alpha = 0.5) + # Alpha sets the transparency of the points
+  # Add dotted lines to indicate the threshold, semi-transparent
+  geom_hline(yintercept = 1.3, linetype = 2, alpha = 0.5) + 
+  geom_vline(xintercept = 0.2, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = -0.2, linetype = 2, alpha = 0.5) +
+  # Set the colour of the points
+  scale_colour_manual(values = c("significant"= "red", "not significant"= "black")) +
+  xlab("log2 fold change") + ylab("-log10 p-value") + # Relabel the axes
+  theme_minimal() +
+  geom_text_repel(aes(label = name, color = "black"), 
+                  data = filter(dat_tf_s305n4, log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  max.iter = 1000,
+                  nudge_x = 0, nudge_y = 0) +
+  labs(title = "Volcano Plot for S305N cortex")+# Set the theme
+  theme(legend.position="none") # Hide the legend
+```
+
+```{r}
+## Vucano plot highlightin phospho tau peptides 
+dat_tf_s305n4 %>%
+  # Add a threshold for significant observations
+  mutate(threshold = if_else(log_fc >= 0.2 & log_pval >= 1.3 | log_fc <= -0.2 & log_pval >= 1.3, "significant", "not significant")) %>%
+  # Plot with points colored according to the threshold
+  ggplot(aes(log_fc, log_pval, colour = threshold)) +
+  geom_point(alpha = 0.5) + # Alpha sets the transparency of the points
+  # Add dotted lines to indicate the threshold, semi-transparent
+  geom_hline(yintercept = 1.3, linetype = 2, alpha = 0.5) + 
+  geom_vline(xintercept = 0.2, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = -0.2, linetype = 2, alpha = 0.5) +
+  # Set the color of the points
+  scale_colour_manual(values = c("significant" = "black", "not significant" = "black", "tau_protein4" = "purple")) +
+  xlab("log2 fold change") + ylab("-log10 p-value") + # Relabel the axes
+  theme_minimal() + 
+  geom_text_repel(aes(label = ifelse(name %in% tau_protein4$Gene, name, "")), 
+                  color = "purple",
+                  data = filter(dat_tf_s305n4, log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  max.iter = 1000,
+                  nudge_x = 0.4, nudge_y = 0.4) +
+  geom_point(aes(x = log_fc, y = log_pval, color = "tau_protein4"), # Add points for tau_protein1
+             data = filter(dat_tf_s305n4, name %in% tau_protein4$Gene),
+             alpha = 0.7, size = 3, shape = 16) + # Adjust size, transparency, and shape
+  labs(title = "S305N cortex") + # Set the theme
+  theme(legend.position = "none") # Hide the legend
+```
+
+
+```{r}
+filt_s305n4 <- dat_tf_s305n4 %>%
+  # Filter for significant observations
+  filter(log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)) %>%
+  # Select columns of interest
+  select(name, log_fc)
+```
+
+```{r}
+
+# Create a subset of the top 25 proteins with the highest log fold change
+top_25_proteins <- filt_s305n4[order(-filt_s305n4$log_fc), ][1:25, ]
+
+# Create the graph
+library(ggplot2)
+
+ggplot(top_25_proteins, aes(x = log_fc, y = reorder(name, -log_fc))) +
+  geom_bar(stat = "identity", color = "white", width = 0.8) +
+  scale_fill_viridis_d() +  # Using a color scale for better color representation
+  labs(title = "Top 25 Proteins with Highest Log Fold Change in S305N CORTEX",
+       x = "Log Fold Change",
+       y = "Protein Name") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none") 
+
+```
+
+```{r}
+# Create a subset of the bottom 25 proteins with the lowest log fold change
+bottom_25_proteins <- filt_s305n4[order(filt_s305n4$log_fc), ][1:25, ]
+
+# Create the graph
+library(ggplot2)
+
+ggplot(bottom_25_proteins, aes(x = log_fc, y = reorder(name, log_fc))) +
+  geom_bar(stat = "identity", color = "white", width = 0.8, fill = "skyblue") +
+  labs(title = "Bottom 25 Proteins with Lowest Log Fold Change in S305N CORTEX",
+       x = "Log Fold Change",
+       y = "Protein Name") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+
+```
+
+```{r}
+# Assuming filt is your data frame
+filt_s305n4$name <- sub("\\_.*", "", filt_s305n4$name)
+
+# Display the updated data frame
+print(filt_s305n4)
+```
+
+
+```{r}
+# Calculate summary statistics for sum_pho2_s305n4
+sum_pho2_s305n4 <- filt_s305n4 %>%
+  group_by(name) %>%
+  summarize(
+    Sum_LogFC_s305n4 = sum(log_fc, na.rm = TRUE),  # Sum of log fold changes, ignoring NA values
+    Num_Peptides = n()  # Number of peptides (observations) for each protein
+  )
+
+
+# Install and load the psych package if not already installed
+# install.packages("psych")
+library(psych)
+
+# Calculate the mean and standard error
+# Fit a linear model (lm) to Sum_LogFC_s305n4
+l.model_s305n4 <- lm(Sum_LogFC_s305n4 ~ 1, sum_pho2_s305n4)
+
+# Calculate the confidence interval for the mean 
+
+confint(l.model_s305n4, level = 0.95)
+summary(l.model_s305n4)
+
+##0.6204 (1.2408) on 667 degrees of freedom mean 0.1613031
+```
+
+
+```{r}
+# Function to determine point color
+get_point_color <- function(x) {
+  ifelse(x > 0, "red", "blue")
+}
+
+# Plot for summarized_p301s
+plot_sum_pho2_s305n4 <- ggplot(sum_pho2_s305n4, aes(x = Num_Peptides, y = Sum_LogFC_s305n4, color = get_point_color(Sum_LogFC_s305n4), label = name)) +
+  geom_point(size = 3, alpha = 0.6) +
+  geom_text_repel(aes(label = name), size = 3, alpha = 0.6, nudge_x = 0.3, nudge_y = 0.3) +
+  labs(title = "Scatter Plot for S305N -cortex Phosphoproteins",
+       x = "Number of Phosphopeptides",
+       y = expression(paste("Sum Log Fold Change (", Delta, "P)")),
+       color = "Phosphoprotein Status") +
+  geom_hline(yintercept = 1.402103, linetype = 2, alpha = 0.5) +
+  geom_hline(yintercept = -1.079497, linetype = 2, alpha = 0.5) +
+  scale_color_manual(values = c("blue" = "blue", "red" = "red"), name = "Phosphorelation Status") +
+  scale_x_continuous(breaks = seq(min(sum_pho2_s305n4$Num_Peptides), max(sum_pho2_s305n4$Num_Peptides), by = 1)) +
+  guides(color = guide_legend(title = "Phosphoprotein Status"))
+
+plot_sum_pho2_s305n4
+```
+
+###p301s
+
+
+```{r}
+# .margins = 1, slice by rows, .fun = t_test plus t_test arguments
+dat_pvals_p301s4 <- adply(pho_imp_4, .margins = 1, .fun = t_test,
+                          grp1 = c(2:5), grp2 = c(10:13)) %>% as_tibble()
+```
+
+
+```{r}
+
+# FDR correction
+dat_pvals_adj_p301s4 <- dat_pvals_p301s4 %>%
+  mutate(fdr_adjusted = p.adjust(p_val, method = "fdr"))
+
+# Plot histogram with FDR-adjusted p-values
+dat_pvals_adj_p301s4 %>%
+  ggplot(aes(fdr_adjusted)) +
+  geom_histogram(binwidth = 0.05,
+                 boundary = 0.5,
+                 fill = "darkblue",
+                 colour = "white") +
+  xlab("FDR-adjusted p-value") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+
+
+```{r}
+# Plot histogram
+dat_pvals_p301s4 %>%
+  ggplot(aes(p_val)) +
+  geom_histogram(binwidth = 0.05,
+                 boundary = 0.5,
+                 fill = "darkblue",
+                 colour = "white") +
+  xlab("p-value") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+
+
+```{r}
+# Define control and treatment columns
+control_columns <- c("control_1", "control_2", "control_3", "control_3")
+p301s4_columns <- c("P301S_1", "P301S_2", "P301S_2", "P301S_4")
+
+# Calculate mean log fold change and log p-values
+dat_fc_p301s4 <- dat_pvals_p301s4 %>%
+  mutate(
+    mean_control = rowMeans(dat_pvals_p301s4[, control_columns], na.rm = TRUE),  # Mean of control columns
+    treat_means = rowMeans(dat_pvals_p301s4[, p301s4_columns], na.rm = TRUE),  # Mean of treatment columns
+    log_fc = treat_means - mean_control,  # Log fold change calculation
+    log_pval = -1 * log10(p_val)  # Log p-value calculation
+  )
+
+# Final transformed data selecting specific columns
+dat_tf_p301s4 <- dat_fc_p301s4 %>% 
+  select(name, log_fc, log_pval, Index)
+
+```
+
+
+```{r}
+# Plot a histogram to look at the distribution.
+dat_tf_p301s4 %>%
+  ggplot(aes(log_fc)) +
+  geom_histogram(binwidth = 0.5,
+                 boundary = 0.5,
+                 fill = "darkblue",
+                 colour = "white") +
+  xlab("log2 fold change") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+```{r}
+###change the name for the plot
+dat_tf_p301s4$name <- sub("\\..*", "", dat_tf_p301s4$name)
+
+# Assuming dat_tf is your data frame
+#dat_tf_p301s4 <- dat_tf_p301s4 %>%
+  #mutate(name = paste(name, gsub(".*_", "", Index), sep = "_"))
+
+# Display the updated data frame
+print(dat_tf_p301s4)
+```
+
+
+```{r, not using this chunk }
+# Assuming dat_tf_pho1 is your dataset
+
+# Function to remove everything after the second underscore in the "name" column
+remove_after_second_underscore <- function(df) {
+  df$name <- sub("^(.*?_.*?)_.*", "\\1", df$name)
+  return(df)
+}
+
+# Apply the function to the dataset
+dat_tf_p301s4 <- remove_after_second_underscore(dat_tf_p301s4)
+
+# Display the updated dataset
+print(dat_tf_p301s4)
+
+```
+
+
+```{r}
+# Vulcano plot 
+dat_tf_p301s4 %>%
+  # Add a threshold for significant observations
+  mutate(threshold = if_else(log_fc >= 0.2 & log_pval >= 1.3 | log_fc <= -0.2 & log_pval >= 1.3, "A", "B")) %>%
+  # Plot with points coloured according to the threshold
+  ggplot(aes(log_fc, log_pval, colour = threshold)) +
+  geom_point(alpha = 0.5) +  # Alpha sets the transparency of the points
+  # Add dotted lines to indicate the threshold, semi-transparent
+  geom_hline(yintercept = 1.3, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = 0.2, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = -0.2, linetype = 2, alpha = 0.5) +
+  # Set the colour of the points
+  scale_colour_manual(values = c("A" = "red", "B" = "black")) +
+  xlab("log2 fold change") + ylab("-log10 p-value") +  # Relabel the axes
+  theme_minimal() +  
+  geom_text_repel(aes(label = name, color = "black"), 
+                  data = filter(dat_tf_p301s4, log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  max.iter = 1000,
+                  nudge_x = 0, nudge_y = 0) +
+  labs(title = "Volcano Plot for P301S - cortex")+# Set the theme# Set the theme
+  theme(legend.position = "none")  # Hide the legend
+```
+```{r}
+# Vulcano plot highlighting tau phospho sites 
+dat_tf_p301s4 %>%
+  # Add a threshold for significant observations
+  mutate(threshold = if_else(log_fc >= 0.2 & log_pval >= 1.3 | log_fc <= -0.2 & log_pval >= 1.3, "significant", "not significant")) %>%
+  # Plot with points colored according to the threshold
+  ggplot(aes(log_fc, log_pval, colour = threshold)) +
+  geom_point(alpha = 0.5) + # Alpha sets the transparency of the points
+  # Add dotted lines to indicate the threshold, semi-transparent
+  geom_hline(yintercept = 1.3, linetype = 2, alpha = 0.5) + 
+  geom_vline(xintercept = 0.2, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = -0.2, linetype = 2, alpha = 0.5) +
+  # Set the color of the points
+  scale_colour_manual(values = c("significant" = "black", "not significant" = "black", "tau_protein4" = "purple")) +
+  xlab("log2 fold change") + ylab("-log10 p-value") + # Relabel the axes
+  theme_minimal() + 
+  geom_text_repel(aes(label = ifelse(name %in% tau_protein4$Gene, name, "")), 
+                  color = "purple",
+                  data = filter(dat_tf_p301s4, log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  max.iter = 1000,
+                  nudge_x = 0.2, nudge_y = 0.2) +
+  geom_point(aes(x = log_fc, y = log_pval, color = "tau_protein4"), # Add points for tau_protein1
+             data = filter(dat_tf_p301s4, name %in% tau_protein4$Gene),
+             alpha = 0.7, size = 3, shape = 16) + # Adjust size, transparency, and shape
+  labs(title = "P301S cortex") + # Set the theme
+  theme(legend.position = "none") # Hide the legend
+```
+
+
+```{r}
+filt_p301s4 <- dat_tf_p301s4 %>%
+  # Filter for significant observations
+  filter(log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)) %>%
+  # Select columns of interest
+  select(name, log_fc)
+```
+
+```{r}
+# Create a subset of the top 25 proteins with the highest log fold change
+top_25_proteins <- filt_p301s4[order(-filt_p301s4$log_fc), ][1:25, ]
+
+# Create the graph
+library(ggplot2)
+
+ggplot(top_25_proteins, aes(x = log_fc, y = reorder(name, -log_fc))) +
+  geom_bar(stat = "identity", color = "white", width = 0.8) +
+  scale_fill_viridis_d() +  # Using a color scale for better color representation
+  labs(title = "Top 25 Proteins with Highest Log Fold Change in P301S",
+       x = "Log Fold Change",
+       y = "Protein Name") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none") 
+
+```
+
+```{r}
+# Create a subset of the bottom 25 proteins with the lowest log fold change
+bottom_25_proteins <- filt_p301s4[order(filt_p301s4$log_fc), ][1:25, ]
+
+# Create the graph
+library(ggplot2)
+
+ggplot(bottom_25_proteins, aes(x = log_fc, y = reorder(name, log_fc))) +
+  geom_bar(stat = "identity", color = "white", width = 0.8, fill = "skyblue") +
+  labs(title = "Bottom 25 Proteins with Lowest Log Fold Change in P301S",
+       x = "Log Fold Change",
+       y = "Protein Name") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+
+```
+
+
+```{r}
+# Assuming filt is your data frame
+filt_p301s4$name <- sub("\\_.*", "", filt_p301s4$name)
+
+# Display the updated data frame
+print(filt_p301s4)
+```
+
+
+```{r}
+##to run this remove plyr package
+# Summarize log fold change and count peptides per protein
+sum_pho2_p301s4 <- filt_p301s4 %>%
+  group_by(name) %>%
+  summarize(
+    Sum_LogFC_p301s4 = sum(log_fc, na.rm = TRUE),  # Sum of log fold change values
+    Num_Peptides = n()  # Count number of peptides
+  )
+
+
+# Install and load the psych package if not already installed
+# install.packages("psych")
+library(psych)
+
+# Calculate the mean and standard error
+# Fit linear model for Sum_LogFC_p301s4
+l.model_p301s4 <- lm(Sum_LogFC_p301s4 ~ 1, sum_pho2_p301s4)
+
+# Calculate the confidence interval
+confint(l.model_p301s4, level = 0.95)
+summary(l.model_p301s4)
+
+## The output includes:
+## - Residual standard error: 0.6617 (1.3234) on 768 degrees of freedom
+## - Mean of Sum_LogFC_p301s4: 0.0984326
+```
+
+
+```{r}
+####Residual standard error: 0.6644 on 768 degrees of freedom and mean 0.08785587
+
+
+# Function to determine point color
+get_point_color <- function(x) {
+  ifelse(x > 0, "red", "blue")
+}
+
+# Plot for summarized_p301s
+plot_sum_pho2_p301s4 <- ggplot(sum_pho2_p301s4, aes(x = Num_Peptides, y = Sum_LogFC_p301s4, color = get_point_color(Sum_LogFC_p301s4), label = name)) +
+  geom_point(size = 3, alpha = 0.6) +
+  geom_text_repel(aes(label = name), size = 3, alpha = 0.6, nudge_x = 0.3, nudge_y = 0.3) +
+  labs(title = "Scatter Plot for P301S - cortex Phosphoproteins",
+       x = "Number of Phosphopeptides",
+       y = expression(paste("Sum Log Fold Change (", Delta, "P)")),
+       color = "Phosphoprotein Status") +
+  geom_hline(yintercept = 1.421833, linetype = 2, alpha = 0.5) +
+  geom_hline(yintercept = -1.224967, linetype = 2, alpha = 0.5) +
+  scale_color_manual(values = c("blue" = "blue", "red" = "red"), name = "Phosphorelation Status") +
+  scale_x_continuous(breaks = seq(min(sum_pho2_p301s4$Num_Peptides), max(sum_pho2_p301s4$Num_Peptides), by = 1)) +
+  guides(color = guide_legend(title = "Phosphoprotein Status"))
+
+plot_sum_pho2_p301s4
+
+```
+
+
+######x10_3 vs control
+
+
+
+```{r}
+library(plyr)
+#remember removed x10+3
+
+# .margins = 1, slice by rows, .fun = t_test plus t_test arguments
+
+dat_pvals_x10_3 <- adply(pho_imp_4, .margins = 1, .fun = t_test,
+                         grp1 = c(2:5), grp2 = c(14:16)) %>% as_tibble()
+```
+
+
+```{r}
+# FDR correction
+dat_pvals_adj_x10_3 <- dat_pvals_x10_3 %>%
+  mutate(fdr_adjusted = p.adjust(p_val, method = "fdr"))
+
+# Plot histogram with FDR-adjusted p-values
+dat_pvals_adj_x10_3 %>%
+  ggplot(aes(fdr_adjusted)) +
+  geom_histogram(binwidth = 0.05,
+                 boundary = 0.5,
+                 fill = "darkblue",
+                 colour = "white") +
+  xlab("FDR-adjusted p-value") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+
+
+```{r}
+# Plot histogram
+dat_pvals_x10_3 %>%
+  ggplot(aes(p_val)) +
+  geom_histogram(binwidth = 0.05,
+                 boundary = 0.5,
+                 fill = "darkblue",
+                 colour = "white") +
+  xlab("p-value") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+
+
+```{r}
+# Define control and treatment column names
+control_columns <- c("control_1", "control_2", "control_3", "control_3")
+x10_3_columns <- c("X10_3_1", "X10_3_2", "X10_3_3")
+
+# Calculate log fold change and log p-value
+dat_fc_x10_3 <- dat_pvals_x10_3 %>%
+  mutate(
+    mean_control = rowMeans(dat_pvals_x10_3[, control_columns], na.rm = TRUE),  # Calculate mean for control columns
+    treat_means = rowMeans(dat_pvals_x10_3[, x10_3_columns], na.rm = TRUE),  # Calculate mean for treatment columns
+    log_fc = treat_means - mean_control,  # Calculate log fold change
+    log_pval = -1 * log10(p_val)  # Calculate negative log10-transformed p-value
+  )
+
+# Final transformed data
+dat_tf_x10_3 <- dat_fc_x10_3 %>% 
+  select(name, log_fc, log_pval, Index)  # Select specific columns for the final transformed dataset
+
+```
+
+
+```{r}
+# Plot a histogram to look at the distribution.
+dat_tf_x10_3 %>%
+  ggplot(aes(log_fc)) +
+  geom_histogram(binwidth = 0.5,
+                 boundary = 0.5,
+                 fill = "darkblue",
+                 colour = "white") +
+  xlab("log2 fold change") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+
+```{r}
+###change the name for the plot
+dat_tf_x10_3$name <- sub("\\..*", "", dat_tf_x10_3$name)
+
+# Assuming dat_tf is your data frame
+#dat_tf_x10_3 <- dat_tf_x10_3 %>%
+ # mutate(name = paste(name, gsub(".*_", "", Index), sep = "_"))
+
+# Display the updated data frame
+print(dat_tf_x10_3)
+```
+
+
+```{r, not using this chucnk !!}
+# Assuming dat_tf_pho1 is your dataset
+
+# Function to remove everything after the second underscore in the "name" column
+remove_after_second_underscore <- function(df) {
+  df$name <- sub("^(.*?_.*?)_.*", "\\1", df$name)
+  return(df)
+}
+
+# Apply the function to the dataset
+dat_tf_x10_3 <- remove_after_second_underscore(dat_tf_x10_3)
+
+# Display the updated dataset
+print(dat_tf_x10_3)
+
+```
+
+```{r}
+# Vulcano Plot 
+dat_tf_x10_3 %>%
+  # Add a threshold for significant observations
+  mutate(threshold = if_else(log_fc >= 0.2 & log_pval >= 1.3 | log_fc <= -0.2 & log_pval >= 1.3, "A", "B")) %>%
+  # Plot with points coloured according to the threshold
+  ggplot(aes(log_fc, log_pval, colour = threshold)) +
+  geom_point(alpha = 0.5) +  # Alpha sets the transparency of the points
+  # Add dotted lines to indicate the threshold, semi-transparent
+  geom_hline(yintercept = 1.3, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = 0.2, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = -0.2, linetype = 2, alpha = 0.5) +
+  # Set the colour of the points
+  scale_colour_manual(values = c("A" = "red", "B" = "black")) +
+  xlab("log2 fold change") + ylab("-log10 p-value") +  # Relabel the axes
+  theme_minimal() + 
+  geom_text_repel(aes(label = name, color = "black"), 
+                  data = filter(dat_tf_x10_3, log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  max.iter = 1000,
+                  nudge_x = 0, nudge_y = 0) +
+  labs(title = "Volcano Plot for 10+3 - cortex")+# Set the theme
+  theme(legend.position = "none")  # Hide the legend
+```
+
+```{r}
+# Vulacano plot with tau phosho sites highlighted in purple 
+dat_tf_x10_3 %>%
+  # Add a threshold for significant observations
+  mutate(threshold = if_else(log_fc >= 0.2 & log_pval >= 1.3 | log_fc <= -0.2 & log_pval >= 1.3, "significant", "not significant")) %>%
+  # Plot with points colored according to the threshold
+  ggplot(aes(log_fc, log_pval, colour = threshold)) +
+  geom_point(alpha = 0.5) + # Alpha sets the transparency of the points
+  # Add dotted lines to indicate the threshold, semi-transparent
+  geom_hline(yintercept = 1.3, linetype = 2, alpha = 0.5) + 
+  geom_vline(xintercept = 0.2, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = -0.2, linetype = 2, alpha = 0.5) +
+  # Set the color of the points
+  scale_colour_manual(values = c("significant" = "black", "not significant" = "black", "tau_protein4" = "purple")) +
+  xlab("log2 fold change") + ylab("-log10 p-value") + # Relabel the axes
+  theme_minimal() + 
+  geom_text_repel(aes(label = ifelse(name %in% tau_protein4$Gene, name, "")), 
+                  color = "purple",
+                  data = filter(dat_tf_x10_3, log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  max.iter = 1000,
+                  nudge_x = 0.2, nudge_y = 0.2) +
+  geom_point(aes(x = log_fc, y = log_pval, color = "tau_protein4"), # Add points for tau_protein1
+             data = filter(dat_tf_x10_3, name %in% tau_protein4$Gene),
+             alpha = 0.7, size = 3, shape = 16) + # Adjust size, transparency, and shape
+  labs(title = "10+3 cortex") + # Set the theme
+  theme(legend.position = "none") # Hide the legend
+```
+
+
+
+```{r}
+filt_x10_3 <- dat_tf_x10_3 %>%
+  # Filter for significant observations
+  filter(log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)) %>%
+  # Select columns of interest
+  select(name, log_fc)
+```
+
+
+```{r}
+
+# Create a subset of the top 25 proteins with the highest log fold change
+top_25_proteins <- filt_x10_3[order(-filt_x10_3$log_fc), ][1:25, ]
+
+# Create the graph
+library(ggplot2)
+
+ggplot(top_25_proteins, aes(x = log_fc, y = reorder(name, -log_fc))) +
+  geom_bar(stat = "identity", color = "white", width = 0.8) +
+  scale_fill_viridis_d() +  # Using a color scale for better color representation
+  labs(title = "Top 25 Proteins with Highest Log Fold Change in 10+3",
+       x = "Log Fold Change",
+       y = "Protein Name") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none") 
+
+```
+
+```{r}
+# Create a subset of the bottom 25 proteins with the lowest log fold change
+bottom_25_proteins <- filt_x10_3[order(filt_x10_3$log_fc), ][1:25, ]
+
+# Create the graph
+library(ggplot2)
+
+ggplot(bottom_25_proteins, aes(x = log_fc, y = reorder(name, log_fc))) +
+  geom_bar(stat = "identity", color = "white", width = 0.8, fill = "skyblue") +
+  labs(title = "Bottom 25 Proteins with Lowest Log Fold Change in 10+3",
+       x = "Log Fold Change",
+       y = "Protein Name") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none")
+
+```
+
+```{r}
+# Assuming filt is your data frame
+filt_x10_3$name <- sub("\\_.*", "", filt_x10_3$name)
+
+# Display the updated data frame
+print(filt_x10_3)
+```
+
+
+```{r}
+# Summarize filtered data by protein name
+sum_pho2_x10_3 <- filt_x10_3 %>%
+  group_by(name) %>%
+  summarize(
+    Sum_LogFC_x10_3 = sum(log_fc, na.rm = TRUE),# Sum of log fold changes for each protein
+    Num_Peptides = n() # Number of peptides for each protein
+  )
+
+# Install and load the psych package if not already installed
+# install.packages("psych")
+library(psych)
+
+# Calculate the mean and standard error
+# Calculate the mean and standard error using a linear model
+l.model_x10_3 <- lm(Sum_LogFC_x10_3 ~ 1, sum_pho2_x10_3)
+
+# Calculate the confidence interval
+confint(l.model_x10_3, level = 0.95)
+summary(l.model_x10_3)
+
+# Expected output:
+# Residual standard error: 0.8398 - 1.6796 on 1006 degrees of freedom
+# Mean of Sum_LogFC_x10_3: 0.3410834
+```
+
+
+```{r}
+
+# Function to determine point color
+get_point_color <- function(x) {
+  ifelse(x > 0, "red", "blue")
+}
+
+# Plot for summarized_p301s
+plot_sum_pho2_x10_3 <- ggplot(sum_pho2_x10_3, aes(x = Num_Peptides, y = Sum_LogFC_x10_3, color = get_point_color(Sum_LogFC_x10_3), label = name)) +
+  geom_point(size = 3, alpha = 0.6) +
+  geom_text_repel(aes(label = name), size = 3, alpha = 0.6, nudge_x = 0.3, nudge_y = 0.3) +
+  labs(title = "Scatter Plot for 10+3 Phosphoproteins",
+       x = "Number of Phosphopeptides",
+       y = expression(paste("Sum Log Fold Change (", Delta, "P)")),
+       color = "Phosphoprotein Status") +
+  geom_hline(yintercept = 2.020683, linetype = 2, alpha = 0.5) +
+  geom_hline(yintercept = -1.338517, linetype = 2, alpha = 0.5) +
+  scale_color_manual(values = c("blue" = "blue", "red" = "red"), name = "Phosphorelation Status") +
+  scale_x_continuous(breaks = seq(min(sum_pho2_x10_3$Num_Peptides), max(sum_pho2_x10_3$Num_Peptides), by = 1)) +
+  guides(color = guide_legend(title = "Phosphoprotein Status"))
+
+plot_sum_pho2_x10_3
+
+
+```
+
+
+
+#######################################################
+##############p301svs s305n
+
+
+
+```{r}
+#remember removed x10+3
+
+# .margins = 1, slice by rows, .fun = t_test plus t_test arguments
+
+dat_pvals_sp <- adply(pho_imp_4, .margins = 1, .fun = t_test,
+                         grp1 = c(6:9), grp2 = c(10:13)) %>% as_tibble()
+```
+
+
+```{r}
+# FDR correction
+dat_pvals_sp <- dat_pvals_sp %>%
+  mutate(fdr_adjusted = p.adjust(p_val, method = "fdr"))
+
+# Plot histogram with FDR-adjusted p-values
+dat_pvals_sp %>%
+  ggplot(aes(fdr_adjusted)) +
+  geom_histogram(binwidth = 0.05,
+                 boundary = 0.5,
+                 fill = "darkblue",
+                 colour = "white") +
+  xlab("FDR-adjusted p-value") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+
+
+```{r}
+# Plot histogram
+dat_pvals_sp %>%
+  ggplot(aes(p_val)) +
+  geom_histogram(binwidth = 0.05,
+                 boundary = 0.5,
+                 fill = "darkblue",
+                 colour = "white") +
+  xlab("p-value") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+
+
+```{r}
+# Define the column names for the control and treatment groups
+control_columns <- c("P301S_1", "P301S_2", "P301S_3", "P301S_4")
+s305n_columns <- c("S305N_1", "S305N_2", "S305N_3", "S305N_4")
+
+# Transform the data and calculate log fold changes and log p-values
+dat_fc_sp <- dat_pvals_sp %>%
+  # Calculate the mean value for control columns, ignoring NA values
+  mutate(mean_control = rowMeans(dat_pvals_sp[, control_columns], na.rm = TRUE),
+         # Calculate the mean value for treatment columns, ignoring NA values
+         treat_means = rowMeans(dat_pvals_sp[, s305n_columns], na.rm = TRUE),
+         # Compute the log fold change (difference between treatment and control means)
+         log_fc = treat_means - mean_control,
+         # Compute the log p-value (negative log10 transformation of p-values)
+         log_pval = -1 * log10(p_val))
+
+# Select the relevant columns for the final transformed data
+dat_tf_sp <- dat_fc_sp %>% select(name, log_fc, log_pval, Index)
+
+# Print the first few rows of the final transformed data for verification
+head(dat_tf_sp)
+
+```
+
+
+```{r}
+# Plot a histogram to look at the distribution.
+dat_tf_sp %>%
+  ggplot(aes(log_fc)) +
+  geom_histogram(binwidth = 0.5,
+                 boundary = 0.5,
+                 fill = "darkblue",
+                 colour = "white") +
+  xlab("log2 fold change") +
+  ylab("Frequency") +
+  theme_minimal()
+```
+
+```{r}
+###change the name for the plot
+dat_tf_sp$name <- sub("\\..*", "", dat_tf_sp$name)
+
+# Assuming dat_tf is your data frame
+#dat_tf_sp <- dat_tf_sp %>%
+ # mutate(name = paste(name, gsub(".*_", "", Index), sep = "_"))
+
+# Display the updated data frame
+print(dat_tf_sp)
+```
+
+
+```{r, not using this chucnk !!!}
+
+# Function to remove everything after the second underscore in the "name" column
+remove_after_second_underscore <- function(df) {
+  df$name <- sub("^(.*?_.*?)_.*", "\\1", df$name)
+  return(df)
+}
+
+# Apply the function to the dataset
+dat_tf_x10_3 <- remove_after_second_underscore(dat_tf_x10_3)
+
+# Display the updated dataset
+print(dat_tf_x10_3)
+
+```
+
+```{r}
+# Vulcano plot 
+dat_tf_sp %>%
+  # Add a threshold for significant observations
+  mutate(threshold = if_else(log_fc >= 0.2 & log_pval >= 1.3 | log_fc <= -0.2 & log_pval >= 1.3, "A", "B")) %>%
+  # Plot with points coloured according to the threshold
+  ggplot(aes(log_fc, log_pval, colour = threshold)) +
+  geom_point(alpha = 0.5) +  # Alpha sets the transparency of the points
+  # Add dotted lines to indicate the threshold, semi-transparent
+  geom_hline(yintercept = 1.3, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = 0.2, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = -0.2, linetype = 2, alpha = 0.5) +
+  # Set the colour of the points
+  scale_colour_manual(values = c("A" = "red", "B" = "black")) +
+  xlab("log2 fold change") + ylab("-log10 p-value") +  # Relabel the axes
+  theme_minimal() + 
+  geom_text_repel(aes(label = name, color = "black"), 
+                  data = filter(dat_tf_sp, log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  max.iter = 1000,
+                  nudge_x = 0, nudge_y = 0) +
+  labs(title = "Volcano Plot for S305N vs P301S - cortex")+# Set the theme
+  theme(legend.position = "none")  # Hide the legend
+```
+
+```{r}
+# Vulcano plot with tau phospho sites highlighted
+dat_tf_sp %>%
+  # Add a threshold for significant observations
+  mutate(threshold = if_else(log_fc >= 0.2 & log_pval >= 1.3 | log_fc <= -0.2 & log_pval >= 1.3, "significant", "not significant")) %>%
+  # Plot with points colored according to the threshold
+  ggplot(aes(log_fc, log_pval, colour = threshold)) +
+  geom_point(alpha = 0.5) + # Alpha sets the transparency of the points
+  # Add dotted lines to indicate the threshold, semi-transparent
+  geom_hline(yintercept = 1.3, linetype = 2, alpha = 0.5) + 
+  geom_vline(xintercept = 0.2, linetype = 2, alpha = 0.5) +
+  geom_vline(xintercept = -0.2, linetype = 2, alpha = 0.5) +
+  # Set the color of the points
+  scale_colour_manual(values = c("significant" = "black", "not significant" = "black", "tau_protein4" = "purple")) +
+  xlab("log2 fold change") + ylab("-log10 p-value") + # Relabel the axes
+  theme_minimal() + 
+  geom_text_repel(aes(label = ifelse(name %in% tau_protein4$Gene, name, "")), 
+                  color = "purple",
+                  data = filter(dat_tf_x10_3, log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)),
+                  box.padding = 0.5,
+                  point.padding = 0.2,
+                  max.iter = 1000,
+                  nudge_x = 0.2, nudge_y = 0.2) +
+  geom_point(aes(x = log_fc, y = log_pval, color = "tau_protein4"), # Add points for tau_protein1
+             data = filter(dat_tf_x10_3, name %in% tau_protein4$Gene),
+             alpha = 0.7, size = 3, shape = 16) + # Adjust size, transparency, and shape
+  labs(title = "10+3 cortex") + # Set the theme
+  theme(legend.position = "none") # Hide the legend
+```
+
+
+
+```{r}
+filt_sp <- dat_tf_sp %>%
+  # Filter for significant observations
+  filter(log_pval >= 1.3 & (log_fc >= 0.2 | log_fc <= -0.2)) %>%
+  # Select columns of interest
+  select(name, log_fc)
+```
+
+
+
+```{r}
+# Assuming filt is your data frame
+filt_sp$name <- sub("\\_.*", "", filt_sp$name)
+
+# Display the updated data frame
+print(filt_sp)
+```
+
+
+```{r}
+# Group the filtered data by 'name' and calculate the sum of log fold changes and the number of peptides
+sum_ph4_sp <- filt_sp %>%
+  group_by(name) %>%
+  summarize(
+    Sum_LogFC_sp = sum(log_fc, na.rm = TRUE),  # Sum of log fold changes for each group
+    Num_Peptides = n()  # Number of peptides for each group
+  )
+
+# Load the psych package for statistical analysis
+library(psych)
+
+# Fit a linear model to calculate the mean and standard error of the sum of log fold changes
+l.model_sp <- lm(Sum_LogFC_sp ~ 1, sum_ph4_sp)
+
+# Calculate the confidence interval
+confint(l.model_sp, level = 0.95)
+summary(l.model_sp)
+
+# The output includes:
+# - Residual standard error: 0.7725 (or 1.545) on 1301 degrees of freedom
+# - Mean of Sum_LogFC_sp: 0.2756388
+```
+
+
+```{r}
+
+# Function to determine point color
+get_point_color <- function(x) {
+  ifelse(x > 0, "red", "blue")
+}
+
+# Plot for summarized_p301s
+plot_sum_pho2_sp <- ggplot(sum_ph4_sp, aes(x = Num_Peptides, y = Sum_LogFC_sp, color = get_point_color(Sum_LogFC_sp), label = name)) +
+  geom_point(size = 3, alpha = 0.6) +
+  geom_text_repel(aes(label = name), size = 3, alpha = 0.6, nudge_x = 0.3, nudge_y = 0.3) +
+  labs(title = "Scatter Plot for S305n vs P301S Phosphoproteins",
+       x = "Number of Phosphopeptides",
+       y = expression(paste("Sum Log Fold Change (", Delta, "P)")),
+       color = "Phosphoprotein Status") +
+  geom_hline(yintercept = 1.820639, linetype = 2, alpha = 0.5) +
+  geom_hline(yintercept = -1.269361, linetype = 2, alpha = 0.5) +
+  scale_color_manual(values = c("blue" = "blue", "red" = "red"), name = "Phosphorelation Status") +
+  scale_x_continuous(breaks = seq(min(sum_ph4_sp$Num_Peptides), max(sum_ph4_sp$Num_Peptides), by = 1)) +
+  guides(color = guide_legend(title = "Phosphoprotein Status"))
+
+plot_sum_pho2_sp
+
+
+```
+
+
