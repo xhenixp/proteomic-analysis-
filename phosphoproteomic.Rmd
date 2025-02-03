@@ -25,11 +25,11 @@ library(plyr)
 
 ```{r, include=FALSE}
 # Read in the phospho data from specified file paths
-ph_df <- readr::read_tsv("/Users/xheniprebibaj/Library/CloudStorage/OneDrive-UniversityCollegeLondon/Phospho project/data/phospo_newdata/Set1-Phospho_abundance_single-site_None.tsv")
+ph_df <- readr::read_tsv("Set1-Phospho_abundance_single-site_None.tsv")
 
-ph_df2 <- readr::read_tsv("/Users/xheniprebibaj/Library/CloudStorage/OneDrive-UniversityCollegeLondon/Phospho project/data/phospo_newdata/Set2_Phospho_abundance_single-site_None.tsv")
+ph_df2 <- readr::read_tsv("Set2_Phospho_abundance_single-site_None.tsv")
 
-ph_df4 <- readr::read_tsv("/Users/xheniprebibaj/Library/CloudStorage/OneDrive-UniversityCollegeLondon/Phospho project/data/phospo_newdata/Cortex_Phospho_abundance_single-site_None.tsv")
+ph_df4 <- readr::read_tsv("Cortex_Phospho_abundance_single-site_None.tsv")
 
 ```
 
