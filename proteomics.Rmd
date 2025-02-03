@@ -256,7 +256,7 @@ ggplot(significant_rows, aes(x = S305N_6_vs_control6_diff, y = S305N_15_vs_contr
 
 ```{r, include=FALSE}
 ###load dataset 2 
-df2<-readr::read_tsv('/Users/xheniprebibaj/Library/CloudStorage/OneDrive-UniversityCollegeLondon/Phospho project/data/Set2-Total_abundance_protein_None (1).tsv')
+df2<-readr::read_tsv('Set2-Total_abundance_protein_None (1).tsv')
 ```
 
 ```{r}
@@ -519,7 +519,7 @@ ggplot(significant_rows2, aes(x = S305N_vs_control_diff, y = P301S_vs_control_di
 
 ###load dataset n4
 
-df4<-readr::read_tsv("/Users/xheniprebibaj/Library/CloudStorage/OneDrive-UniversityCollegeLondon/Phospho project/data/Cortex_Total_abundance_protein_None (1).tsv")
+df4<-readr::read_tsv("Cortex_Total_abundance_protein_None (1).tsv")
 
 ```
 
