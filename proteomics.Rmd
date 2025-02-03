@@ -26,7 +26,7 @@ library("ggrepel")
 ```{r, include=FALSE}
 ##load dataset 
 
-df<-readr::read_tsv('/Users/xheniprebibaj/Library/CloudStorage/OneDrive-UniversityCollegeLondon/Phospho project/data/Set1-Total_abundance_protein_None (1).tsv')
+df<-readr::read_tsv('Set1-Total_abundance_protein_None (1).tsv')
 
 ```
 
